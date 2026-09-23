@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import qsim.model.*;
 
@@ -26,12 +27,34 @@ public class ContractValidator {
 
   private static final double EPS = 1e-6;
 
+  /**
+   * Node and class names a caller may send. Deliberately narrow, because these names are not only
+   * XML attribute values and routing-map keys — they become *filenames*. A measure's {@code name} is
+   * built from the node and class name ({@code MeasureMapper.map}), and JMT writes a verbose
+   * measure's per-sample log to {@code <logPath>/<measure name>.csv} (issue #15), so a name holding a
+   * path separator or a {@code ..} segment is a write outside the run's temp directory. Requiring the
+   * first character to be alphanumeric excludes {@code .} and {@code ..} without a special case, and
+   * the 64-character cap keeps the composed measure name inside every filesystem's limit.
+   *
+   * <p>Every node and class name in the repo's fixtures and examples is a plain lowercase
+   * identifier, so this tightens the contract without breaking a caller we know about — it is a
+   * documented contract change nonetheless (README).
+   */
+  private static final Pattern SAFE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
+
   public void validate(SimulationRequest req) {
     List<String> errors = new ArrayList<>();
     NetworkModel model = req.model();
     if (model == null || model.nodes() == null || model.classes() == null) {
       throw new ValidationException(ValidationException.Kind.UNPROCESSABLE,
           List.of("model, model.nodes and model.classes are required"));
+    }
+
+    for (JobClass c : model.classes()) {
+      checkName(errors, "class name", c.name());
+    }
+    for (Node n : model.nodes()) {
+      checkName(errors, "node name", n.name());
     }
 
     Set<String> nodeNames = model.nodes().stream().map(Node::name).collect(Collectors.toSet());
@@ -107,6 +130,15 @@ public class ContractValidator {
 
     if (!errors.isEmpty()) {
       throw new ValidationException(ValidationException.Kind.UNPROCESSABLE, errors);
+    }
+  }
+
+  private static void checkName(List<String> errors, String kind, String name) {
+    if (name == null || !SAFE_NAME.matcher(name).matches()) {
+      errors.add(kind + " " + (name == null ? "(null)" : "'" + name + "'")
+          + " is not allowed: use 1-64 characters from [A-Za-z0-9._-], starting with a letter or "
+          + "digit. These names become per-measure log filenames, so path separators, spaces and "
+          + "'.'/'..' segments are rejected.");
     }
   }
 }

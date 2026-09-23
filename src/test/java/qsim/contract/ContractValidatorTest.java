@@ -105,4 +105,73 @@ class ContractValidatorTest {
     assertTrue(ex.details().stream().anyMatch(s -> s.contains("servers")));
     assertTrue(ex.details().stream().anyMatch(s -> s.contains("capacity")));
   }
+
+  /**
+   * The measure name a node name ends up inside becomes a CSV filename once a measure is verbose
+   * (issue #15), so a name carrying a path is a write outside the run's temp directory.
+   */
+  @Test
+  void rejectsNodeNameThatWouldEscapeTheLogDirectory() {
+    String escaping = "../../../../tmp/pwn";
+    NetworkModel m = new NetworkModel("bad",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(
+            new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(1.0)))),
+            new QueueNode(escaping, "queue", 1, "fcfs", null,
+                Map.of("web", new ServiceSpec(exp(2.0)))),
+            new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", escaping, null),
+                              new RoutingEdge(escaping, "snk", null))));
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(m)));
+    assertEquals(ValidationException.Kind.UNPROCESSABLE, ex.kind());
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("node name") && s.contains("pwn")));
+  }
+
+  @Test
+  void rejectsClassNameWithASeparatorOrDotSegment() {
+    for (String bad : List.of("web/x", "web\\x", "..", ".hidden", "a b")) {
+      NetworkModel m = new NetworkModel("bad",
+          List.of(new JobClass(bad, "open", null, null)),
+          List.of(
+              new SourceNode("src", "source", Map.of(bad, new ArrivalSpec(exp(1.0)))),
+              new QueueNode("q", "queue", 1, "fcfs", null, Map.of(bad, new ServiceSpec(exp(2.0)))),
+              new SinkNode("snk", "sink")),
+          Map.of(bad, List.of(new RoutingEdge("src", "q", null), new RoutingEdge("q", "snk", null))));
+      ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(m)),
+          "must reject class name '" + bad + "'");
+      assertTrue(ex.details().stream().anyMatch(s -> s.contains("class name")),
+          "details must name the offending class for '" + bad + "': " + ex.details());
+    }
+  }
+
+  @Test
+  void rejectsNameLongerThan64Characters() {
+    String tooLong = "q".repeat(65);
+    NetworkModel m = new NetworkModel("bad",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(
+            new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(1.0)))),
+            new QueueNode(tooLong, "queue", 1, "fcfs", null, Map.of("web", new ServiceSpec(exp(2.0)))),
+            new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", tooLong, null),
+                              new RoutingEdge(tooLong, "snk", null))));
+    assertThrows(ValidationException.class, () -> validator.validate(req(m)));
+  }
+
+  /** The names every fixture and example in the repo actually uses must keep working. */
+  @Test
+  void acceptsOrdinaryIdentifierNames() {
+    // "src" and "snk" are deliberately absent: reusing them as the queue's name collides with the
+    // source and sink in this fixture and trips the routing rules, which is a different test.
+    for (String ok : List.of("q", "web", "machine-repairmen", "q_2", "Q.1", "fj", "Q1", "a")) {
+      NetworkModel m = new NetworkModel("ok",
+          List.of(new JobClass("web", "open", null, null)),
+          List.of(
+              new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(1.0)))),
+              new QueueNode(ok, "queue", 1, "fcfs", null, Map.of("web", new ServiceSpec(exp(2.0)))),
+              new SinkNode("snk", "sink")),
+          Map.of("web", List.of(new RoutingEdge("src", ok, null), new RoutingEdge(ok, "snk", null))));
+      assertDoesNotThrow(() -> validator.validate(req(m)), "must accept node name '" + ok + "'");
+    }
+  }
 }
