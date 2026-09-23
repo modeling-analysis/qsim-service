@@ -15,6 +15,7 @@
 package qsim.translate;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -154,7 +155,41 @@ public class MeasureMapper {
         }
       }
     }
-    return specs;
+    return withDistinctNames(specs);
+  }
+
+  /**
+   * Guarantees every spec a name of its own, suffixing {@code -2}, {@code -3}, ... on collision.
+   *
+   * <p>The composed {@code node_class_type} name is not injective, because {@code _} is the
+   * delimiter and is also legal inside node and class names ({@link
+   * qsim.contract.ContractValidator}'s {@code SAFE_NAME}): node {@code a_b} + class {@code c} and
+   * node {@code a} + class {@code b_c} both spell {@code a_b_c_<type>}. That was harmless while the
+   * name was only an XML identifier — the parser keys results off the {@code station} and
+   * {@code class} attributes, not the name — but a verbose measure's name is also its per-sample CSV
+   * filename under {@code <sim logPath>}, and JMT's {@code JSimLoggerFactory} caches one writer per
+   * file. Two measures sharing a name therefore share a sample file and each read back the other's
+   * samples interleaved with their own: measured ~10x out in the mean and ~100x in the variance,
+   * reported with {@code successful="true"}. Silently wrong numbers, which is the failure issue #14
+   * was about.
+   *
+   * <p>Suffixing rather than rejecting, because such a model is legal and worked before verbose
+   * logging existed; and only the collision is renamed, because measure names appear in the emitted
+   * XML and in JMT's output.
+   */
+  private static List<MeasureSpec> withDistinctNames(List<MeasureSpec> specs) {
+    Set<String> taken = new HashSet<>();
+    List<MeasureSpec> out = new ArrayList<>(specs.size());
+    for (MeasureSpec s : specs) {
+      String name = s.name();
+      for (int i = 2; !taken.add(name); i++) {
+        name = s.name() + "-" + i;
+      }
+      out.add(name.equals(s.name()) ? s
+          : new MeasureSpec(name, s.jmtType(), s.referenceNode(), s.referenceUserClass(),
+              s.nodeType(), s.verbose()));
+    }
+    return out;
   }
 
   /**

@@ -201,4 +201,49 @@ class MeasureMapperTest {
     assertTrue(new MeasureMapper().map(m, null).stream().noneMatch(s -> s.verbose()),
         "sample logging costs disk and wall clock; it must be opted into, never defaulted");
   }
+
+  /**
+   * A measure name becomes a per-sample CSV filename under {@code <sim logPath>}, and JMT caches one
+   * writer per file — so two measures sharing a name share a file, and both then read back a merged
+   * sample stream. The name is composed as {@code node_class_type} while {@code _} is legal inside
+   * node and class names, so node {@code a_b} + class {@code c} and node {@code a} + class
+   * {@code b_c} collide on {@code a_b_c_interarrival-time}. Ordinary names reach this: {@code
+   * web_tier}/{@code gold} against {@code web}/{@code tier_gold}. Reported second moments were ~10x
+   * out in the mean and ~100x in the variance, with {@code successful="true"} — the silently-wrong-
+   * number failure this branch exists to remove.
+   */
+  @Test
+  void measureNamesStayDistinctWhenNodeAndClassNamesContainTheDelimiter() {
+    Map<String, ServiceSpec> both =
+        Map.of("c", new ServiceSpec(exp(2.0)), "b_c", new ServiceSpec(exp(2.0)));
+    NetworkModel m = new NetworkModel("collide",
+        List.of(new JobClass("c", "open", null, null), new JobClass("b_c", "open", null, null)),
+        List.of(new SourceNode("src", "source",
+                    Map.of("c", new ArrivalSpec(exp(0.5)), "b_c", new ArrivalSpec(exp(0.5)))),
+                new QueueNode("a_b", "queue", 1, "fcfs", null, both),
+                new QueueNode("a", "queue", 1, "fcfs", null, both),
+                new SinkNode("snk", "sink")),
+        Map.of("c", List.of(new RoutingEdge("src", "a_b", null), new RoutingEdge("a_b", "a", null),
+                            new RoutingEdge("a", "snk", null)),
+               "b_c", List.of(new RoutingEdge("src", "a_b", null), new RoutingEdge("a_b", "a", null),
+                              new RoutingEdge("a", "snk", null))));
+
+    List<MeasureSpec> specs = new MeasureMapper().map(m, List.of("interarrival-time"));
+
+    assertEquals(4, specs.size(), "two stations x two classes");
+    assertEquals(4, specs.stream().map(MeasureSpec::name).distinct().count(),
+        "every measure needs its own sample file: " + specs.stream().map(MeasureSpec::name).toList());
+  }
+
+  /**
+   * The disambiguation must not rename anything that was not colliding: measure names appear in the
+   * emitted XML and in JMT's own output, and every other test here pins the plain
+   * {@code node_class_type} form.
+   */
+  @Test
+  void aCollisionDoesNotRenameTheMeasuresAroundIt() {
+    List<MeasureSpec> specs = mapper.map(model(), List.of("utilization", "interarrival-time"));
+    assertEquals(List.of("q_web_utilization", "q_web_interarrival-time"),
+        specs.stream().map(MeasureSpec::name).toList());
+  }
 }

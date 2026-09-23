@@ -66,24 +66,28 @@ public class SimulationService {
       measures = MeasureMapper.withVerbose(measures);
     }
     boolean anyVerbose = measures.stream().anyMatch(MeasureSpec::verbose);
+
+    // Everything from the directory's creation onwards sits inside the try: translation itself
+    // raises caller-reachable 422s (an unsupported join policy, inconsistent fork-join branch
+    // classes, any XSD failure), and a 422 must not leave a directory behind either.
     Path logDir = null;
-    if (anyVerbose) {
-      try {
-        logDir = JmtRunner.createLogDir(config.tempDir());
-      } catch (IOException e) {
-        throw new IllegalStateException(
-            "cannot create a measure log directory under " + config.tempDir()
-                + "; second moments need somewhere to write per-sample logs", e);
-      }
-    }
-
-    var doc = writer.toDocument(req.model(), stopping, seed, measures,
-        logDir == null ? null : logDir.toString());
-    writer.validate(doc); // XSD gate -> ValidationException(UNPROCESSABLE) on failure
-    String xml = qsim.translate.Xml.serialize(doc);
-
     RunResult run = null;
     try {
+      if (anyVerbose) {
+        try {
+          logDir = JmtRunner.createLogDir(config.tempDir());
+        } catch (IOException e) {
+          throw new IllegalStateException(
+              "cannot create a measure log directory under " + config.tempDir()
+                  + "; second moments need somewhere to write per-sample logs", e);
+        }
+      }
+
+      var doc = writer.toDocument(req.model(), stopping, seed, measures,
+          logDir == null ? null : logDir.toString());
+      writer.validate(doc); // XSD gate -> ValidationException(UNPROCESSABLE) on failure
+      String xml = qsim.translate.Xml.serialize(doc);
+
       run = runner.run(xml, seed, stopping.maxWallClockSeconds(), /* terminal */ true);
       SolutionsParser.Parsed parsed = parser.parse(run.outputFile());
       return new SimulationResponse(req.model().name(), "simulation", seed,

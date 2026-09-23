@@ -294,6 +294,47 @@ class SimulationServiceTest {
     }
   }
 
+  /**
+   * Review Focus 3, for the half {@link #theLogDirectoryIsRemovedWhenTheEngineFails} cannot see. That
+   * test stubs the engine, so it only exercises failures that happen after the run starts — but the
+   * directory is created before translation, and translation raises ordinary caller-reachable 422s
+   * that {@link qsim.contract.ContractValidator} does not catch first ({@code JsimgWriter} rejects an
+   * unsupported join policy, inconsistent fork-join branch classes, and any XSD failure). A client
+   * looping on such a model would add one orphaned directory per request, and JMT never cleans them
+   * up.
+   */
+  @Test
+  void theLogDirectoryIsRemovedWhenTranslationRejectsTheModel() throws Exception {
+    Path temp = Files.createTempDirectory("qsim-service-test-");
+    Config config = new Config(8080, temp.toString(), 0.05, 0.05, 1_000, 100_000, 120);
+
+    // Valid to the contract layer and to validateDistributions, rejected by the writer: v1 supports
+    // only join "all" or a count.
+    NetworkModel badJoin = new NetworkModel("bad-join",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(1.0)))),
+                new ForkJoinNode("fj", "fork-join", List.of(
+                    new Branch(Map.of("web", new ServiceSpec(exp(4.0)))),
+                    new Branch(Map.of("web", new ServiceSpec(exp(4.0))))), "bogus"),
+                new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", "fj", null), new RoutingEdge("fj", "snk", null))));
+
+    SimulationService service = new SimulationService(config, new JmtRunner() {
+      @Override
+      public RunResult run(String xml, long seed, Integer maxWallClockSeconds, boolean terminal) {
+        throw new AssertionError("translation must fail before the engine is invoked");
+      }
+    });
+
+    assertThrows(ValidationException.class, () -> service.simulate(new SimulationRequest(
+        badJoin, 42L, looseStopping(), List.of("interarrival-time"), null)));
+
+    try (var entries = Files.list(temp)) {
+      assertEquals(List.of(), entries.toList(),
+          "a 422 from the writer must not leak a log directory");
+    }
+  }
+
   @Test
   void aRequestWithoutSecondMomentsGetsNoLogDirectory() throws Exception {
     Path temp = Files.createTempDirectory("qsim-service-test-");
