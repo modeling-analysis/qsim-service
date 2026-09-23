@@ -148,7 +148,10 @@ contract is unchanged either way).
     "disableStatisticStop": false
   },
 
-  "measures": ["response-time", "utilization", "throughput", "queue-length"]  // omit ⇒ default set
+  "measures": ["response-time", "utilization", "throughput", "queue-length"],  // omit ⇒ default set
+
+  "secondMoments": false                                    // true ⇒ per-sample logging, so variance/stdDev
+                                                            // come back populated (§5.2 as-built note)
 }
 ```
 
@@ -195,14 +198,19 @@ run independent replications and aggregate them correctly (see §9). `success:fa
 >   requested `0.05` in the example implies achieved precision; JMT writes the requested parameter back
 >   into its output and the parser reports it verbatim. A caller cannot read achieved precision off the
 >   response — compute it from `(upper - lower) / 2 / mean` instead.
-> - **`variance` and `stdDev` come back `null`,** not the `0.011` / `0.105` shown.
->   `XMLSimulationOutput` writes both from a later conditional branch than the main attribute block,
->   and that branch does not fire for these runs.
+> - **`variance` and `stdDev` are populated only on request** — they were unconditionally `null`
+>   until issue [#15](https://github.com/modeling-analysis/qsim-service/issues/15). The later
+>   conditional branch in `XMLSimulationOutput` that writes them fires only for a measure marked
+>   `verbose="true"` in a terminal simulation, where JMT re-reads the per-sample CSV it logged. The
+>   service now asks for that per measure: always for `interarrival-time`, and for every other
+>   non-rate-typed measure when the request carries `"secondMoments": true`. Off by default, because
+>   the sample log costs ~40 bytes per sample and 25-30% wall clock. `throughput` and `drop-rate`
+>   report `null` even then (see §6.1). The `precision` bullet above is still open.
 >
 > `success` *does* now mean "this measure's CI target met", as the example claims — but only since
 > [#12](https://github.com/modeling-analysis/qsim-service/issues/12); before that it was set true regardless of
-> achieved precision. Both bullets above are tracked on
-> [#14](https://github.com/modeling-analysis/qsim-service/issues/14) and remain open; when they land, restore
+> achieved precision. The `precision` bullet is tracked on
+> [#14](https://github.com/modeling-analysis/qsim-service/issues/14) and remains open; when it lands, restore
 > the §5.1 example to the achieved-value behaviour it already describes.
 
 Measure `type` values (v1): `response-time`, `residence-time`, `queue-time`, `queue-length`,
@@ -211,8 +219,16 @@ Measure `type` values (v1): `response-time`, `residence-time`, `queue-time`, `qu
 
 > **As built** (correction, not a design change — the list above overstates what shipped). The
 > implemented set is `MeasureMapper.SUPPORTED`: `response-time`, `residence-time`, `queue-time`,
-> `queue-length`, `utilization`, `throughput`, `drop-rate`, `system-response-time`. Three entries
-> above were never implemented — `arrival-rate`, `system-throughput`, and `fork-join-response-time`.
+> `queue-length`, `utilization`, `throughput`, `drop-rate`, `system-response-time`, plus
+> `interarrival-time` (issue #15). Three entries above were never implemented —
+> `arrival-rate`, `system-throughput`, and `fork-join-response-time`.
+>
+> `interarrival-time` replaces the `arrival-rate` the list names, and is not a rename: the spec's
+> `arrival-rate` would have been a rate with `variance: null`, which is the one thing a caller asking
+> about an arrival process cannot use. Reporting the mean *time* between arrivals, with `variance` and
+> `stdDev` beside it, lets the caller compute `scv = variance / mean^2` — the input a decomposition
+> method needs. The service deliberately does not expose `scv` itself: every other measure reports
+> moments and leaves the derived quantities to the caller.
 >
 > There is **no separate `fork-join-response-time` type**: `response-time` requested on a `fork-join`
 > node *is* the fork-to-join sojourn, translated to JMT's `"Fork Join Response Time"` measure anchored
@@ -248,6 +264,8 @@ Measure `type` values (v1): `response-time`, `residence-time`, `queue-time`, `qu
 | `sink`                | `JobSink` |
 | routing edges         | `<connection>` + per-class `EmpiricalStrategy` (probabilities) in the `Router` |
 | measures + stopping   | `<measure alpha precision>` + `<sim>` attrs (`seed`,`maxSamples`,`minSamples`,`maxSimulated`,`maxEvents`,`disableStatisticStop`) + `DispatcherJSIMschema.setSimulationMaxDuration` (wall clock) |
+| `interarrival-time`   | `<measure type="Arrival Rate">` on the station, `referenceUserClass` set (per class) — read as inter-event times, not as a rate (below) |
+| second moments        | `<measure verbose="true">` + `<sim logPath>` + `setTerminalSimulation(true)`; the service creates one throwaway log directory per run and deletes it in a `finally` |
 
 > **Two engine conventions worth not rediscovering** (both cost real debugging time):
 >
@@ -261,6 +279,29 @@ Measure `type` values (v1): `response-time`, `residence-time`, `queue-time`, `qu
 >   `getAttribute("minSamples")` exactly like `maxSamples`; the schema is simply stale. Emitting it is
 >   correct and costs one non-fatal validation complaint per run from the engine's own loader. See
 >   [#10](https://github.com/modeling-analysis/qsim-service/issues/10).
+> - **`"Arrival Rate"` and `"Throughput"` are `InverseMeasure`s: their `meanValue` and their `mean`
+>   are in different units.** The raw samples JMT collects for either are the times *between* events;
+>   `meanValue` is `1.0 / analyzer.getMean()` of those times, i.e. a rate, while `mean`, `variance`
+>   and `standardDeviation` are moments of the times themselves. Mixing the two — dividing the rate's
+>   square into the time-domain variance — gives a number about 123x wrong (118.7 where the true SCV
+>   was 0.961). So `SolutionsParser` reads `mean` for `interarrival-time` and `meanValue` for
+>   everything else (`MeasureMapper.RAW_SAMPLE_MEAN`), and suppresses `variance`/`stdDev` entirely for
+>   the rate-typed measures that keep reporting a rate (`MeasureMapper.RATE_TYPED`: `throughput`,
+>   `drop-rate`). It also drops the confidence interval on `interarrival-time`: JMT computes the
+>   interval around the *rate*, so it would not bracket the mean time reported next to it.
+> - **Second moments need `verbose="true"` *and* a terminal simulation *and* a writable `logPath`.**
+>   `XMLSimulationOutput.writeMeasure` only emits `variance`/`standardDeviation` when it can re-read
+>   the measure's per-sample CSV, which JMT writes as `<logPath>/<measure name>.csv` and never deletes
+>   — hence the per-run directory, and hence the `[A-Za-z0-9._-]{1,64}` guard on node and class names
+>   in `ContractValidator`, since a measure name is built from them and becomes a filename.
+>   `StatisticalOutputsLoader` starts reading at `discardedSamples`, so the warm-up transient is
+>   excluded. A verbose measure that collected no samples makes JMT log a `FileNotFoundException` at
+>   SEVERE and omit the attributes; the run and every other measure survive, and the measure comes
+>   back with `variance: null`.
+> - **An arrival measure on a `fork-join` node must stay anchored on the fork station,** like
+>   `response-time` (issue #6) and unlike every other station measure (issue #8). The join sees one
+>   arrival per sibling branch, so anchoring there reports the branch arrival rate rather than the
+>   region's: 0.248 against the fork's 0.083 on a three-branch model.
 
 Node sections are instantiated reflectively by JMT (`jmt.engine.NodeSections.*`); the translation
 layer emits the section class names and typed parameter blocks the loader expects.
@@ -310,7 +351,9 @@ per-run means, and the cross-run CI is a Student-t interval on those K values. T
 for JMT's standard indices because they are all means (response time, queue length, utilization =
 time-average fraction, throughput = rate). Genuinely non-linear measures (percentiles, max) cannot be
 averaged — but v1 exposes none. Unequal-length runs can be precision-weighted using the returned
-per-run `samples`/`variance`.
+per-run `samples`/`variance` — which for measures other than `interarrival-time` means sending
+`"secondMoments": true` (§5.2 as-built note), and for `throughput`/`drop-rate` is not available at
+all, so weight those by `samples` alone.
 
 ## 10. Tech & deployment
 
@@ -330,3 +373,18 @@ per-run `samples`/`variance`.
   subprocess-per-request fallback only if a leak is observed.
 - Exact JMT section-parameter blocks for `Gamma`, `MAP`/`MMPP2`, and `Fork`/`Join` strategies
   (drive from the `examples/jsim/qn_models/*.jsimg` templates, e.g. `open_1class_3stat_fork.jsimg`).
+
+### 11.1 Deferred from the arrival-process work (issue #15)
+
+Three things a caller might reasonably expect from `interarrival-time` that are not built:
+
+- **A confidence interval on the mean interarrival time.** JMT's interval is around the arrival rate,
+  and reporting `[1/upper, 1/lower]` would be a reciprocal transform of a *t*-interval — valid for the
+  median, only approximate for the mean, and easy to misread as exact. Deferred rather than
+  approximated; `alpha` and the sample counts still describe the run.
+- **An `interdeparture-time` type.** JMT has no departure-process measure; the natural substitute is
+  `interarrival-time` at the downstream station, which is exactly the departure stream in a tandem.
+  A real one would mean a synthetic downstream probe or an engine-side measure.
+- **Measured service-time moments.** JMT 1.4.0 collects no service-time samples of its own, so there
+  is nothing to parse: a caller wanting service-time variability has to read it off the distribution it
+  supplied. Not a parser gap — the measure does not exist in the engine.
