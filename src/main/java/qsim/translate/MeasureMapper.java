@@ -15,6 +15,7 @@
 package qsim.translate;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,7 @@ public class MeasureMapper {
     STATION.put("utilization", "Utilization");
     STATION.put("throughput", "Throughput");
     STATION.put("drop-rate", "Drop Rate");
+    STATION.put("interarrival-time", "Arrival Rate");
     SYSTEM.put("system-response-time", "System Response Time");
   }
 
@@ -62,10 +64,58 @@ public class MeasureMapper {
       Map.of("response-time", "Fork Join Response Time");
 
   /**
-   * JMT measure types that {@link JsimgWriter} must leave anchored on the fork station instead of
+   * JMT measure types {@link JsimgWriter} must leave anchored on the fork station instead of
    * remapping onto the internal join station.
+   *
+   * <p>Two different reasons put a type here. {@link #FORK_JOIN_STATION}'s measures are collected
+   * from the job list the *fork* station's input section maintains between fork and join, so the
+   * join is simply the wrong anchor and the type is meaningless anywhere else (issue #6).
+   * {@code "Arrival Rate"} is anchored for an unrelated reason: it is valid on any station, but the
+   * join's job list is fed one arrival per sibling branch rather than one per job, so an
+   * interarrival time taken there is the inter-sibling gap (measured 0.248 against the fork's 0.083
+   * on three branches) rather than the gap between jobs entering the fork-join. Hence the split from
+   * {@link #FORK_JOIN_ONLY_TYPES}: everything here stays on the fork, but only those are *rejected*
+   * elsewhere.
    */
-  static final Set<String> FORK_JOIN_TYPES = Set.copyOf(FORK_JOIN_STATION.values());
+  static final Set<String> FORK_ANCHORED_TYPES;
+
+  /** Types meaningful only on a fork-join node; {@link JsimgWriter} rejects them on any other. */
+  static final Set<String> FORK_JOIN_ONLY_TYPES = Set.copyOf(FORK_JOIN_STATION.values());
+
+  static {
+    var anchored = new java.util.HashSet<>(FORK_JOIN_ONLY_TYPES);
+    anchored.add("Arrival Rate");
+    FORK_ANCHORED_TYPES = Set.copyOf(anchored);
+  }
+
+  /**
+   * JMT measure types whose {@code MeasureResult.mean} must be read from the output document's
+   * raw-sample {@code mean} attribute rather than {@code meanValue}.
+   *
+   * <p>{@code "Arrival Rate"} is an {@code InverseMeasure}: {@code getMeanValue()} returns
+   * {@code 1.0 / analyzer.getMean()}, so {@code meanValue} is a rate while the samples underneath —
+   * and therefore the {@code mean}, {@code variance} and {@code standardDeviation} attributes — are
+   * interarrival times. Reporting the rate as {@code mean} next to a variance over times would hand
+   * a caller computing {@code variance / mean^2} an answer wrong by orders of magnitude, so qsim
+   * reports the interarrival time itself and names the domain type after it. The arrival rate is
+   * {@code 1 / mean}, and {@code throughput} already reports it directly.
+   */
+  public static final Set<String> RAW_SAMPLE_MEAN = Set.of("Arrival Rate");
+
+  /**
+   * JMT measure types qsim reports as a rate even though their verbose statistics describe the
+   * inter-event times between the events being counted — the same {@code InverseMeasure} mismatch as
+   * {@link #RAW_SAMPLE_MEAN}, but for types whose rate is the figure a caller wants. Their second
+   * moments are in the wrong units to sit beside that mean (a measured rate of 0.30088 with a
+   * variance of 10.747 gives an SCV of 118.7 against a true 0.961), so
+   * {@link qsim.result.SolutionsParser} drops them and {@link #withVerbose} does not pay to log
+   * them. Mirrors {@code EngineUtils.isInverseMeasure} for the subset qsim emits; exposing these
+   * moments properly would mean a separate {@code interdeparture-time} type.
+   */
+  public static final Set<String> RATE_TYPED = Set.of("Throughput", "Drop Rate");
+
+  /** Domain measure types whose figures exist only when JMT logs the individual samples. */
+  private static final Set<String> REQUIRES_VERBOSE = Set.of("interarrival-time");
 
   public static final Set<String> SUPPORTED;
   static {
@@ -95,7 +145,7 @@ public class MeasureMapper {
           String jmtForNode = n instanceof ForkJoinNode ? FORK_JOIN_STATION.getOrDefault(t, jmt) : jmt;
           for (String clazz : servedClasses(n)) {
             specs.add(new MeasureSpec(n.name() + "_" + clazz + "_" + t, jmtForNode,
-                n.name(), clazz, "station"));
+                n.name(), clazz, "station", REQUIRES_VERBOSE.contains(t)));
           }
         }
       } else { // system-level
@@ -105,7 +155,56 @@ public class MeasureMapper {
         }
       }
     }
-    return specs;
+    return withDistinctNames(specs);
+  }
+
+  /**
+   * Guarantees every spec a name of its own, suffixing {@code -2}, {@code -3}, ... on collision.
+   *
+   * <p>The composed {@code node_class_type} name is not injective, because {@code _} is the
+   * delimiter and is also legal inside node and class names ({@link
+   * qsim.contract.ContractValidator}'s {@code SAFE_NAME}): node {@code a_b} + class {@code c} and
+   * node {@code a} + class {@code b_c} both spell {@code a_b_c_<type>}. That was harmless while the
+   * name was only an XML identifier — the parser keys results off the {@code station} and
+   * {@code class} attributes, not the name — but a verbose measure's name is also its per-sample CSV
+   * filename under {@code <sim logPath>}, and JMT's {@code JSimLoggerFactory} caches one writer per
+   * file. Two measures sharing a name therefore share a sample file and each read back the other's
+   * samples interleaved with their own: measured ~10x out in the mean and ~100x in the variance,
+   * reported with {@code successful="true"}. Silently wrong numbers, which is the failure issue #14
+   * was about.
+   *
+   * <p>Suffixing rather than rejecting, because such a model is legal and worked before verbose
+   * logging existed; and only the collision is renamed, because measure names appear in the emitted
+   * XML and in JMT's output.
+   */
+  private static List<MeasureSpec> withDistinctNames(List<MeasureSpec> specs) {
+    Set<String> taken = new HashSet<>();
+    List<MeasureSpec> out = new ArrayList<>(specs.size());
+    for (MeasureSpec s : specs) {
+      String name = s.name();
+      for (int i = 2; !taken.add(name); i++) {
+        name = s.name() + "-" + i;
+      }
+      out.add(name.equals(s.name()) ? s
+          : new MeasureSpec(name, s.jmtType(), s.referenceNode(), s.referenceUserClass(),
+              s.nodeType(), s.verbose()));
+    }
+    return out;
+  }
+
+  /**
+   * Every spec with per-sample logging switched on, except {@link #RATE_TYPED} measures whose second
+   * moments the parser discards anyway. Backs the request-level {@code secondMoments} opt-in: JMT's
+   * verbose output is per measure, so turning it on globally is a decision about which specs carry
+   * the flag rather than a separate switch.
+   */
+  public static List<MeasureSpec> withVerbose(List<MeasureSpec> specs) {
+    List<MeasureSpec> out = new ArrayList<>(specs.size());
+    for (MeasureSpec s : specs) {
+      out.add(new MeasureSpec(s.name(), s.jmtType(), s.referenceNode(), s.referenceUserClass(),
+          s.nodeType(), !RATE_TYPED.contains(s.jmtType())));
+    }
+    return out;
   }
 
   /** Classes with service defined at this node (queue/delay/fork-join). Sources/sinks yield none. */

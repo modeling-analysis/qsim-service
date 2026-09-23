@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<solutions modelName="probe" solutionMethod="simulation">
+  <measure alfa="0.05" analyzedSamples="10240" class="web"
+    coefficientOfVariation="0.9803411447931643" discardedSamples="100"
+    firstPowerMoment="3.3440541634186807" fourthPowerMoment="2651.990619119153"
+    kurtosis="4.983622314497387" lowerLimit="0.2935860105446729" maxSamples="400000"
+    maxValue="28.896790324830363" mean="3.3440541634186807" meanValue="0.30088256380549294"
+    measureType="Arrival Rate" nodeType="station" precision="0.03"
+    secondPowerMoment="21.930040188369862" skeweness="1.8750404301072088"
+    standardDeviation="3.2783138868162167" station="q1" successful="true"
+    upperLimit="0.3085510461620826" variance="10.74734194049205"/>
+  <measure alfa="0.05" analyzedSamples="10240" class="web" discardedSamples="100"
+    lowerLimit="0.2935860105446729" maxSamples="400000" mean="3.3440541634186807"
+    meanValue="0.30088256380549294" measureType="Throughput" nodeType="station"
+    precision="0.03" standardDeviation="3.2783138868162167" station="q1" successful="true"
+    upperLimit="0.3085510461620826" variance="10.74734194049205"/>
+</solutions>

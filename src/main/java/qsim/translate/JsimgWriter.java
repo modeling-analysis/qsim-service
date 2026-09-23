@@ -36,10 +36,27 @@ public class JsimgWriter {
   private final DistributionResolver resolver = new DistributionResolver();
 
   public String toXmlString(NetworkModel model, Stopping stopping, long seed, List<MeasureSpec> measures) {
-    return Xml.serialize(toDocument(model, stopping, seed, measures));
+    return toXmlString(model, stopping, seed, measures, null);
+  }
+
+  public String toXmlString(NetworkModel model, Stopping stopping, long seed,
+                            List<MeasureSpec> measures, String logPath) {
+    return Xml.serialize(toDocument(model, stopping, seed, measures, logPath));
   }
 
   public Document toDocument(NetworkModel model, Stopping stopping, long seed, List<MeasureSpec> measures) {
+    return toDocument(model, stopping, seed, measures, null);
+  }
+
+  /**
+   * @param logPath directory JMT writes one per-sample CSV into for each measure with
+   *     {@link MeasureSpec#verbose()} set, named {@code <measure name>.csv}; it re-reads them at the
+   *     end of the run to compute the second moments (issue #15). Pass {@code null} when no measure
+   *     is verbose: the attribute is then omitted and the document is exactly what it was before.
+   *     The caller owns the directory's lifecycle — JMT never deletes these files.
+   */
+  public Document toDocument(NetworkModel model, Stopping stopping, long seed,
+                             List<MeasureSpec> measures, String logPath) {
     checkMeasures(model, measures);
     Document doc = Xml.newDocument();
     Element sim = Xml.child(doc, "sim",
@@ -54,7 +71,13 @@ public class JsimgWriter {
         "maxEvents", stopping == null || stopping.maxEvents() == null ? "-1" : stopping.maxEvents().toString(),
         "maxSimulated", stopping == null || stopping.maxSimulatedTime() == null ? "-1.0" : stopping.maxSimulatedTime().toString(),
         "disableStatisticStop", stopping != null && Boolean.TRUE.equals(stopping.disableStatisticStop()) ? "true" : "false",
-        "polling", "1.0");
+        "polling", "1.0",
+        "logPath", logPath,
+        // The CSV dialect StatisticalOutputsLoader reads back. Written explicitly rather than left
+        // to the schema's defaults so the samples JMT parses are the samples it wrote.
+        "logDelimiter", logPath == null ? null : ",",
+        "logDecimalSeparator", logPath == null ? null : ".",
+        "logReplaceMode", logPath == null ? null : "0");
     // Declare the xsi namespace binding the engine requires (Task 2). Set as a real
     // namespace declaration so it is exempt from XSD validation.
     sim.setAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns:xsi",
@@ -577,7 +600,7 @@ public class JsimgWriter {
         "nodeType", m.nodeType(),
         "alpha", alpha,
         "precision", precision,
-        "verbose", "false");
+        "verbose", m.verbose() ? "true" : "false");
   }
 
   /**
@@ -587,14 +610,16 @@ public class JsimgWriter {
    * is the JSIMG fork node — the *entry* of the fork-join, not its exit. Confined to the writer per
    * the brief's design decision so Task 6 stays agnostic of Task 8's expansion.
    *
-   * <p>{@link MeasureMapper#FORK_JOIN_TYPES} are the exception: JMT's dedicated fork-join measures
-   * are collected from the job list the *fork* station's input section maintains between fork and
-   * join, so remapping them onto the join station would silently measure the wrong thing
+   * <p>{@link MeasureMapper#FORK_ANCHORED_TYPES} are the exception: JMT's dedicated fork-join
+   * measures are collected from the job list the *fork* station's input section maintains between
+   * fork and join, so remapping them onto the join station would silently measure the wrong thing
    * (issue #6). Those stay on the domain name, which is already the fork station; that the node
    * really is a fork-join has been established by {@link #checkMeasures} before any writing starts.
+   * Not every anchored type is fork-join-only — see {@code MeasureMapper.FORK_ANCHORED_TYPES} for why
+   * {@code Arrival Rate} is anchored without being restricted.
    */
   private static String expandedMeasureNode(NetworkModel model, MeasureSpec m) {
-    if (MeasureMapper.FORK_JOIN_TYPES.contains(m.jmtType())) {
+    if (MeasureMapper.FORK_ANCHORED_TYPES.contains(m.jmtType())) {
       return m.referenceNode();
     }
     for (Node n : model.nodes()) {
@@ -618,7 +643,7 @@ public class JsimgWriter {
     }
     List<String> details = new ArrayList<>();
     for (MeasureSpec m : measures) {
-      if (MeasureMapper.FORK_JOIN_TYPES.contains(m.jmtType())
+      if (MeasureMapper.FORK_JOIN_ONLY_TYPES.contains(m.jmtType())
           && !(nodeNamed(model, m.referenceNode()) instanceof ForkJoinNode)) {
         details.add("measure type '" + m.jmtType() + "' applies only to a fork-join node, but '"
             + m.referenceNode() + "' is not one");

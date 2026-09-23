@@ -15,6 +15,7 @@
 package qsim.translate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -132,5 +133,117 @@ class MeasureMapperTest {
     ValidationException ex = assertThrows(ValidationException.class,
         () -> mapper.map(model(), List.of("teleportation-latency")));
     assertEquals(ValidationException.Kind.BAD_REQUEST, ex.kind());
+  }
+
+  @Test
+  void interarrivalTimeMapsToArrivalRatePerClassAndAsksForSampleLogging() {
+    NetworkModel m = new NetworkModel("mm1",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(0.5)))),
+                new QueueNode("q", "queue", 1, "fcfs", null, Map.of("web", new ServiceSpec(exp(1.0)))),
+                new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", "q", null), new RoutingEdge("q", "snk", null))));
+
+    List<MeasureSpec> specs = new MeasureMapper().map(m, List.of("interarrival-time"));
+
+    // Source and sink serve no classes, so only the queue yields a measure - same as every type.
+    assertEquals(1, specs.size());
+    MeasureSpec s = specs.get(0);
+    assertEquals("q_web_interarrival-time", s.name());
+    assertEquals("Arrival Rate", s.jmtType());
+    assertEquals("q", s.referenceNode());
+    assertEquals("web", s.referenceUserClass());  // per-class, like every station measure
+    assertEquals("station", s.nodeType());
+    assertTrue(s.verbose(), "the interarrival moments only exist when JMT logs the samples");
+  }
+
+  /**
+   * Review Focus 4: a source or sink yields nothing, silently, exactly as for response-time. Pinned
+   * so the behaviour cannot drift into a surprise.
+   */
+  @Test
+  void interarrivalTimeYieldsNoMeasureForSourcesOrSinks() {
+    NetworkModel m = new NetworkModel("mm1",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(0.5)))),
+                new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", "snk", null))));
+
+    assertEquals(List.of(), new MeasureMapper().map(m, List.of("interarrival-time")));
+  }
+
+  @Test
+  void withVerboseTurnsLoggingOnExceptForRateTypedMeasures() {
+    List<MeasureSpec> in = List.of(
+        new MeasureSpec("q_web_response-time", "Response Time", "q", "web", "station", false),
+        new MeasureSpec("q_web_throughput", "Throughput", "q", "web", "station", false),
+        new MeasureSpec("q_web_drop-rate", "Drop Rate", "q", "web", "station", false));
+
+    List<MeasureSpec> out = MeasureMapper.withVerbose(in);
+
+    assertTrue(out.get(0).verbose(), "response time's moments are reportable");
+    // Their mean is a rate while their samples are inter-event times: the moments would be
+    // suppressed by the parser anyway, so logging them is pure cost.
+    assertFalse(out.get(1).verbose(), "throughput is rate-typed");
+    assertFalse(out.get(2).verbose(), "drop rate is rate-typed");
+    assertEquals("q_web_throughput", out.get(1).name(), "withVerbose must not alter anything else");
+  }
+
+  @Test
+  void interarrivalTimeIsNotADefaultMeasure() {
+    NetworkModel m = new NetworkModel("mm1",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(0.5)))),
+                new QueueNode("q", "queue", 1, "fcfs", null, Map.of("web", new ServiceSpec(exp(1.0)))),
+                new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", "q", null), new RoutingEdge("q", "snk", null))));
+
+    assertTrue(new MeasureMapper().map(m, null).stream().noneMatch(s -> s.verbose()),
+        "sample logging costs disk and wall clock; it must be opted into, never defaulted");
+  }
+
+  /**
+   * A measure name becomes a per-sample CSV filename under {@code <sim logPath>}, and JMT caches one
+   * writer per file — so two measures sharing a name share a file, and both then read back a merged
+   * sample stream. The name is composed as {@code node_class_type} while {@code _} is legal inside
+   * node and class names, so node {@code a_b} + class {@code c} and node {@code a} + class
+   * {@code b_c} collide on {@code a_b_c_interarrival-time}. Ordinary names reach this: {@code
+   * web_tier}/{@code gold} against {@code web}/{@code tier_gold}. Reported second moments were ~10x
+   * out in the mean and ~100x in the variance, with {@code successful="true"} — the silently-wrong-
+   * number failure this branch exists to remove.
+   */
+  @Test
+  void measureNamesStayDistinctWhenNodeAndClassNamesContainTheDelimiter() {
+    Map<String, ServiceSpec> both =
+        Map.of("c", new ServiceSpec(exp(2.0)), "b_c", new ServiceSpec(exp(2.0)));
+    NetworkModel m = new NetworkModel("collide",
+        List.of(new JobClass("c", "open", null, null), new JobClass("b_c", "open", null, null)),
+        List.of(new SourceNode("src", "source",
+                    Map.of("c", new ArrivalSpec(exp(0.5)), "b_c", new ArrivalSpec(exp(0.5)))),
+                new QueueNode("a_b", "queue", 1, "fcfs", null, both),
+                new QueueNode("a", "queue", 1, "fcfs", null, both),
+                new SinkNode("snk", "sink")),
+        Map.of("c", List.of(new RoutingEdge("src", "a_b", null), new RoutingEdge("a_b", "a", null),
+                            new RoutingEdge("a", "snk", null)),
+               "b_c", List.of(new RoutingEdge("src", "a_b", null), new RoutingEdge("a_b", "a", null),
+                              new RoutingEdge("a", "snk", null))));
+
+    List<MeasureSpec> specs = new MeasureMapper().map(m, List.of("interarrival-time"));
+
+    assertEquals(4, specs.size(), "two stations x two classes");
+    assertEquals(4, specs.stream().map(MeasureSpec::name).distinct().count(),
+        "every measure needs its own sample file: " + specs.stream().map(MeasureSpec::name).toList());
+  }
+
+  /**
+   * The disambiguation must not rename anything that was not colliding: measure names appear in the
+   * emitted XML and in JMT's own output, and every other test here pins the plain
+   * {@code node_class_type} form.
+   */
+  @Test
+  void aCollisionDoesNotRenameTheMeasuresAroundIt() {
+    List<MeasureSpec> specs = mapper.map(model(), List.of("utilization", "interarrival-time"));
+    assertEquals(List.of("q_web_utilization", "q_web_interarrival-time"),
+        specs.stream().map(MeasureSpec::name).toList());
   }
 }

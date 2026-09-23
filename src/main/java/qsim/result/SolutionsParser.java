@@ -25,6 +25,7 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import qsim.model.MeasureResult;
+import qsim.translate.MeasureMapper;
 
 public class SolutionsParser {
 
@@ -39,6 +40,7 @@ public class SolutionsParser {
       Map.entry("Utilization", "utilization"),
       Map.entry("Throughput", "throughput"),
       Map.entry("Drop Rate", "drop-rate"),
+      Map.entry("Arrival Rate", "interarrival-time"),
       Map.entry("System Response Time", "system-response-time"),
       // A fork-join node's "response-time" is requested as JMT's dedicated fork-region measure
       // (see MeasureMapper.FORK_JOIN_STATION / issue #6); it comes back under the domain node name
@@ -73,11 +75,37 @@ public class SolutionsParser {
         // real regression and must stay visible.
         Double lower = parseD(m.getAttribute("lowerLimit"));
         Double upper = parseD(m.getAttribute("upperLimit"));
+        String jmtType = m.getAttribute("measureType");
+
+        // Which attribute holds the mean depends on the measure. For an InverseMeasure JMT reports
+        // meanValue = 1/E[sample] while `mean`, `variance` and `standardDeviation` describe the raw
+        // samples; for "Arrival Rate" the raw sample IS the quantity qsim reports, so the mean must
+        // come from the sample-side attribute or it would not agree with the variance next to it
+        // (issue #15). See MeasureMapper.RAW_SAMPLE_MEAN.
+        boolean rawSampleMean = MeasureMapper.RAW_SAMPLE_MEAN.contains(jmtType);
+        Double mean = parseD(m.getAttribute(rawSampleMean ? "mean" : "meanValue"));
+
+        // JMT's confidence interval is computed on whatever meanValue reports, so for a raw-sample
+        // measure it brackets the rate rather than the mean above. Issue #15 explicitly accepts a
+        // mean with no interval; an interval that does not contain its point estimate would be worse
+        // than none. A reciprocal transform is possible later (see the plan's deferred work).
+        if (rawSampleMean) {
+          lower = null;
+          upper = null;
+        }
+
+        // The remaining rate-typed measures keep their rate as the mean — that is the figure callers
+        // want — which leaves their second moments in the wrong units to sit beside it. Dropped
+        // rather than converted; exposing interdeparture moments needs its own domain type.
+        boolean rateTyped = MeasureMapper.RATE_TYPED.contains(jmtType);
+        Double variance = rateTyped ? null : parseD(m.getAttribute("variance"));
+        Double stdDev = rateTyped ? null : parseD(m.getAttribute("standardDeviation"));
+
         results.add(new MeasureResult(
             domainStation(m.getAttribute("station")),
             m.getAttribute("class"),
-            REVERSE.getOrDefault(m.getAttribute("measureType"), m.getAttribute("measureType")),
-            parseD(m.getAttribute("meanValue")),
+            REVERSE.getOrDefault(jmtType, jmtType),
+            mean,
             lower,
             upper,
             parseD(m.getAttribute("alfa")),
@@ -85,8 +113,8 @@ public class SolutionsParser {
             success,
             parseI(m.getAttribute("analyzedSamples")),
             parseI(m.getAttribute("discardedSamples")),
-            parseD(m.getAttribute("variance")),
-            parseD(m.getAttribute("standardDeviation"))));
+            variance,
+            stdDev));
       }
       return new Parsed(results, completed);
     } catch (Exception e) {

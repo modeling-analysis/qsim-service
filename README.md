@@ -113,9 +113,50 @@ curl -X POST localhost:8080/simulate -H 'Content-Type: application/json' -d '{
 }'
 ```
 
-Each response measure carries `mean`, CI (`lower`/`upper`), `alpha`, `precision`,
-`success`, `samplesAnalyzed`, `samplesDiscarded`, `variance`, `stdDev`. `completed:false`
+**Supported `measures`.** Every station measure is reported per class, one row per
+node/class pair. Omit the field and you get `response-time`, `utilization`, `throughput`,
+`queue-length`.
+
+| Measure | What it reports |
+|---|---|
+| `response-time` | time in the station, queueing included (fork-to-join sojourn on a `fork-join` node) |
+| `residence-time` | response time weighted by visits |
+| `queue-time` | waiting time before service |
+| `queue-length` | number of customers at the station |
+| `utilization` | busy fraction of the station's servers |
+| `throughput` | completions per unit time (a rate) |
+| `drop-rate` | losses per unit time at a finite-capacity queue (a rate) |
+| `interarrival-time` | mean time between arrivals at a station, per class — `variance` and `stdDev` included, so `scv = variance / mean^2` |
+| `system-response-time` | end-to-end response time for the whole network, per class |
+
+Each response measure carries `mean`, CI (`lower`/`upper`), `alpha`, `precision`, `success`,
+`samplesAnalyzed`, `samplesDiscarded`, `variance`, `stdDev`. `completed:false`
 means a cap fired before all CIs converged — the caller decides whether to trust or re-run.
+
+`variance` and `stdDev` are populated only when JMT logs the measure's individual samples, which is
+off by default — it costs roughly 40 bytes of temporary disk per sample and 25-30% wall clock. Two
+things switch it on:
+
+- `"measures": ["interarrival-time"]` — always, because the measure has nothing to report without
+  it.
+- `"secondMoments": true` at the top level of the request — for every other measure that can carry
+  second moments.
+
+The samples are written to per-measure CSV files in a fresh temporary directory under
+`QSIM_TEMP_DIR`, which the service deletes when the run ends. Budget for it: at a `maxSamples` of
+1,000,000 a single measure's log is tens of megabytes, and `precision` is per measure, so a tight
+precision on many measures multiplies both the disk and the time. The warm-up transient is excluded
+— JMT computes these statistics from the samples after `samplesDiscarded`.
+
+`throughput` and `drop-rate` report `variance: null` and `stdDev: null` even with `secondMoments`
+on. Their `mean` is a rate, while the samples underneath are the times *between* events, so the two
+numbers are in different units and `variance / mean^2` off them would be meaningless (about 120x
+wrong). If you need the variability of a departure stream, ask for `interarrival-time` at the
+downstream station.
+
+`interarrival-time` reports no confidence interval (`lower` and `upper` are null): JMT computes its
+interval on the arrival *rate*, which would not bracket the mean interarrival time reported beside
+it. `alpha`, `precision` and the sample counts still describe the run.
 
 **`precision` binds, so budget for it.** `stopping.precision` is a *relative* CI half-width target,
 and a run continues until it is met or a cap fires. Halving it costs roughly 4x the samples, so a
@@ -127,14 +168,21 @@ the target was never enforced, so runs returned almost immediately and this cost
 
 **Fork-join measures:** on a `fork-join` node, `response-time` is the whole fork-to-join sojourn —
 the time from the job splitting to all required branches having rejoined — not any one branch's or
-the join's own residence time. Per-branch numbers are not reported separately; a fork-join's
-measures come back under its own node name.
+the join's own residence time. `interarrival-time` is likewise measured at the fork, so it is the gap
+between jobs *entering* the region and not the gap between sibling branches arriving at the join.
+Per-branch numbers are not reported separately; a fork-join's measures come back under its own node
+name.
 
-> **Caveat:** `response-time` is currently the *only* measure with fork-join-region semantics.
+> **Caveat:** `response-time` and `interarrival-time` are currently the *only* measures with
+> fork-join-region semantics.
 > `queue-length`, `residence-time`, `queue-time`, `utilization`, `throughput` and `drop-rate` on a
 > fork-join node are measured at its internal join station, so e.g. `queue-length` is the join's
 > synchronization backlog rather than the fork-join's in-flight population. Do not read those as
 > region figures — see [#8](https://github.com/modeling-analysis/qsim-service/issues/8).
+
+**Node and class names** must be 1-64 characters from `[A-Za-z0-9._-]` and start with a letter or
+digit. They are not free text: JMT names each per-sample log after the measure it belongs to, so a
+node or class name becomes part of a filename on the server.
 
 **Distributions:** named (`{"type":"exponential","rate":r}`, `{"type":"deterministic","value":v}`)
 or moment form (`{"mean":m,"scv":c}` → Exponential/Deterministic/Gamma). v1 implements these
