@@ -36,10 +36,27 @@ public class JsimgWriter {
   private final DistributionResolver resolver = new DistributionResolver();
 
   public String toXmlString(NetworkModel model, Stopping stopping, long seed, List<MeasureSpec> measures) {
-    return Xml.serialize(toDocument(model, stopping, seed, measures));
+    return toXmlString(model, stopping, seed, measures, null);
+  }
+
+  public String toXmlString(NetworkModel model, Stopping stopping, long seed,
+                            List<MeasureSpec> measures, String logPath) {
+    return Xml.serialize(toDocument(model, stopping, seed, measures, logPath));
   }
 
   public Document toDocument(NetworkModel model, Stopping stopping, long seed, List<MeasureSpec> measures) {
+    return toDocument(model, stopping, seed, measures, null);
+  }
+
+  /**
+   * @param logPath directory JMT writes one per-sample CSV into for each measure with
+   *     {@link MeasureSpec#verbose()} set, named {@code <measure name>.csv}; it re-reads them at the
+   *     end of the run to compute the second moments (issue #15). Pass {@code null} when no measure
+   *     is verbose: the attribute is then omitted and the document is exactly what it was before.
+   *     The caller owns the directory's lifecycle — JMT never deletes these files.
+   */
+  public Document toDocument(NetworkModel model, Stopping stopping, long seed,
+                             List<MeasureSpec> measures, String logPath) {
     checkMeasures(model, measures);
     Document doc = Xml.newDocument();
     Element sim = Xml.child(doc, "sim",
@@ -54,7 +71,13 @@ public class JsimgWriter {
         "maxEvents", stopping == null || stopping.maxEvents() == null ? "-1" : stopping.maxEvents().toString(),
         "maxSimulated", stopping == null || stopping.maxSimulatedTime() == null ? "-1.0" : stopping.maxSimulatedTime().toString(),
         "disableStatisticStop", stopping != null && Boolean.TRUE.equals(stopping.disableStatisticStop()) ? "true" : "false",
-        "polling", "1.0");
+        "polling", "1.0",
+        "logPath", logPath,
+        // The CSV dialect StatisticalOutputsLoader reads back. Written explicitly rather than left
+        // to the schema's defaults so the samples JMT parses are the samples it wrote.
+        "logDelimiter", logPath == null ? null : ",",
+        "logDecimalSeparator", logPath == null ? null : ".",
+        "logReplaceMode", logPath == null ? null : "0");
     // Declare the xsi namespace binding the engine requires (Task 2). Set as a real
     // namespace declaration so it is exempt from XSD validation.
     sim.setAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns:xsi",
@@ -577,7 +600,7 @@ public class JsimgWriter {
         "nodeType", m.nodeType(),
         "alpha", alpha,
         "precision", precision,
-        "verbose", "false");
+        "verbose", m.verbose() ? "true" : "false");
   }
 
   /**
