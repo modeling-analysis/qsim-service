@@ -16,6 +16,7 @@ package qsim.model;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import qsim.http.Json;
@@ -81,5 +82,24 @@ class RequestBindingTest {
     assertTrue(out.contains("\"class\":\"web\""), "measure job class must serialize as key 'class'");
     assertTrue(out.contains("\"solutionMethod\":\"simulation\""));
     assertTrue(out.contains("\"completed\":true"));
+  }
+
+  @Test
+  void bindsSecondMomentsFlag() throws Exception {
+    String json = """
+        {"model":{"name":"m","classes":[],"nodes":[],"routing":{}},
+         "measures":["interarrival-time"],"secondMoments":true}
+        """;
+    SimulationRequest req = Json.MAPPER.readValue(json, SimulationRequest.class);
+    assertEquals(Boolean.TRUE, req.secondMoments());
+    assertEquals(java.util.List.of("interarrival-time"), req.measures());
+  }
+
+  @Test
+  void secondMomentsIsNullWhenAbsent() throws Exception {
+    String json = """
+        {"model":{"name":"m","classes":[],"nodes":[],"routing":{}}}
+        """;
+    assertNull(Json.MAPPER.readValue(json, SimulationRequest.class).secondMoments());
   }
 }

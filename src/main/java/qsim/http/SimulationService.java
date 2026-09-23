@@ -14,6 +14,8 @@
  */
 package qsim.http;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -57,17 +59,42 @@ public class SimulationService {
     long seed = effectiveSeed(req.seed());
     List<MeasureSpec> measures = measureMapper.map(req.model(), req.measures());
 
-    var doc = writer.toDocument(req.model(), stopping, seed, measures);
+    // JMT's verbose output is per measure, so the request-level flag is applied by flipping the
+    // specs. interarrival-time already carries the flag from the mapper — its figures do not exist
+    // without the sample log — so an ordinary request asking only for it still gets a log directory.
+    if (Boolean.TRUE.equals(req.secondMoments())) {
+      measures = MeasureMapper.withVerbose(measures);
+    }
+    boolean anyVerbose = measures.stream().anyMatch(MeasureSpec::verbose);
+    Path logDir = null;
+    if (anyVerbose) {
+      try {
+        logDir = JmtRunner.createLogDir(config.tempDir());
+      } catch (IOException e) {
+        throw new IllegalStateException(
+            "cannot create a measure log directory under " + config.tempDir()
+                + "; second moments need somewhere to write per-sample logs", e);
+      }
+    }
+
+    var doc = writer.toDocument(req.model(), stopping, seed, measures,
+        logDir == null ? null : logDir.toString());
     writer.validate(doc); // XSD gate -> ValidationException(UNPROCESSABLE) on failure
     String xml = qsim.translate.Xml.serialize(doc);
 
-    RunResult run = runner.run(xml, seed, stopping.maxWallClockSeconds(), /* terminal */ true);
+    RunResult run = null;
     try {
+      run = runner.run(xml, seed, stopping.maxWallClockSeconds(), /* terminal */ true);
       SolutionsParser.Parsed parsed = parser.parse(run.outputFile());
       return new SimulationResponse(req.model().name(), "simulation", seed,
           run.wallClockSeconds(), parsed.completed(), parsed.measures());
     } finally {
-      runner.cleanup(run);
+      if (run != null) {
+        runner.cleanup(run);
+      }
+      // The engine can throw, or be cut off by the wall-clock cap, and JMT never removes these
+      // files — so this cannot sit on the success path only.
+      JmtRunner.deleteLogDir(logDir);
     }
   }
 
