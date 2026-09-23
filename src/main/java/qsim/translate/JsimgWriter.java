@@ -610,14 +610,16 @@ public class JsimgWriter {
    * is the JSIMG fork node — the *entry* of the fork-join, not its exit. Confined to the writer per
    * the brief's design decision so Task 6 stays agnostic of Task 8's expansion.
    *
-   * <p>{@link MeasureMapper#FORK_JOIN_TYPES} are the exception: JMT's dedicated fork-join measures
-   * are collected from the job list the *fork* station's input section maintains between fork and
-   * join, so remapping them onto the join station would silently measure the wrong thing
+   * <p>{@link MeasureMapper#FORK_ANCHORED_TYPES} are the exception: JMT's dedicated fork-join
+   * measures are collected from the job list the *fork* station's input section maintains between
+   * fork and join, so remapping them onto the join station would silently measure the wrong thing
    * (issue #6). Those stay on the domain name, which is already the fork station; that the node
    * really is a fork-join has been established by {@link #checkMeasures} before any writing starts.
+   * Not every anchored type is fork-join-only — see {@code MeasureMapper.FORK_ANCHORED_TYPES} for why
+   * {@code Arrival Rate} is anchored without being restricted.
    */
   private static String expandedMeasureNode(NetworkModel model, MeasureSpec m) {
-    if (MeasureMapper.FORK_JOIN_TYPES.contains(m.jmtType())) {
+    if (MeasureMapper.FORK_ANCHORED_TYPES.contains(m.jmtType())) {
       return m.referenceNode();
     }
     for (Node n : model.nodes()) {
@@ -641,7 +643,7 @@ public class JsimgWriter {
     }
     List<String> details = new ArrayList<>();
     for (MeasureSpec m : measures) {
-      if (MeasureMapper.FORK_JOIN_TYPES.contains(m.jmtType())
+      if (MeasureMapper.FORK_JOIN_ONLY_TYPES.contains(m.jmtType())
           && !(nodeNamed(model, m.referenceNode()) instanceof ForkJoinNode)) {
         details.add("measure type '" + m.jmtType() + "' applies only to a fork-join node, but '"
             + m.referenceNode() + "' is not one");

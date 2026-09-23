@@ -15,6 +15,7 @@
 package qsim.translate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -132,5 +133,72 @@ class MeasureMapperTest {
     ValidationException ex = assertThrows(ValidationException.class,
         () -> mapper.map(model(), List.of("teleportation-latency")));
     assertEquals(ValidationException.Kind.BAD_REQUEST, ex.kind());
+  }
+
+  @Test
+  void interarrivalTimeMapsToArrivalRatePerClassAndAsksForSampleLogging() {
+    NetworkModel m = new NetworkModel("mm1",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(0.5)))),
+                new QueueNode("q", "queue", 1, "fcfs", null, Map.of("web", new ServiceSpec(exp(1.0)))),
+                new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", "q", null), new RoutingEdge("q", "snk", null))));
+
+    List<MeasureSpec> specs = new MeasureMapper().map(m, List.of("interarrival-time"));
+
+    // Source and sink serve no classes, so only the queue yields a measure - same as every type.
+    assertEquals(1, specs.size());
+    MeasureSpec s = specs.get(0);
+    assertEquals("q_web_interarrival-time", s.name());
+    assertEquals("Arrival Rate", s.jmtType());
+    assertEquals("q", s.referenceNode());
+    assertEquals("web", s.referenceUserClass());  // per-class, like every station measure
+    assertEquals("station", s.nodeType());
+    assertTrue(s.verbose(), "the interarrival moments only exist when JMT logs the samples");
+  }
+
+  /**
+   * Review Focus 4: a source or sink yields nothing, silently, exactly as for response-time. Pinned
+   * so the behaviour cannot drift into a surprise.
+   */
+  @Test
+  void interarrivalTimeYieldsNoMeasureForSourcesOrSinks() {
+    NetworkModel m = new NetworkModel("mm1",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(0.5)))),
+                new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", "snk", null))));
+
+    assertEquals(List.of(), new MeasureMapper().map(m, List.of("interarrival-time")));
+  }
+
+  @Test
+  void withVerboseTurnsLoggingOnExceptForRateTypedMeasures() {
+    List<MeasureSpec> in = List.of(
+        new MeasureSpec("q_web_response-time", "Response Time", "q", "web", "station", false),
+        new MeasureSpec("q_web_throughput", "Throughput", "q", "web", "station", false),
+        new MeasureSpec("q_web_drop-rate", "Drop Rate", "q", "web", "station", false));
+
+    List<MeasureSpec> out = MeasureMapper.withVerbose(in);
+
+    assertTrue(out.get(0).verbose(), "response time's moments are reportable");
+    // Their mean is a rate while their samples are inter-event times: the moments would be
+    // suppressed by the parser anyway, so logging them is pure cost.
+    assertFalse(out.get(1).verbose(), "throughput is rate-typed");
+    assertFalse(out.get(2).verbose(), "drop rate is rate-typed");
+    assertEquals("q_web_throughput", out.get(1).name(), "withVerbose must not alter anything else");
+  }
+
+  @Test
+  void interarrivalTimeIsNotADefaultMeasure() {
+    NetworkModel m = new NetworkModel("mm1",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(0.5)))),
+                new QueueNode("q", "queue", 1, "fcfs", null, Map.of("web", new ServiceSpec(exp(1.0)))),
+                new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", "q", null), new RoutingEdge("q", "snk", null))));
+
+    assertTrue(new MeasureMapper().map(m, null).stream().noneMatch(s -> s.verbose()),
+        "sample logging costs disk and wall clock; it must be opted into, never defaulted");
   }
 }

@@ -16,6 +16,7 @@ package qsim.translate;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -163,5 +164,25 @@ class JsimgWriterClosedForkTest {
     assertEquals(ValidationException.Kind.UNPROCESSABLE, ex.kind());
     assertTrue(ex.getMessage().contains("fj"));
     assertTrue(ex.getMessage().contains("api"));
+  }
+
+  /**
+   * An arrival measure inside a fork-join expansion must stay on the fork station. The join's job
+   * list is fed one arrival per sibling branch rather than one per job, so an interarrival time
+   * taken there is the inter-sibling gap, not the gap between jobs entering the fork-join (measured
+   * 0.248 against the fork's 0.083 on three branches). Unlike "Fork Join Response Time" this type is
+   * perfectly valid on an ordinary station, which is why the writer's fork-anchored set is wider
+   * than its fork-join-only set.
+   */
+  @Test
+  void anArrivalRateMeasureOnAForkJoinStaysOnTheForkStation() {
+    NetworkModel m = forkNet();
+    List<MeasureSpec> specs = new MeasureMapper().map(m, List.of("interarrival-time"));
+    String xml = new JsimgWriter().toXmlString(m, null, 7L, specs, "/tmp/qsim-logs-test");
+
+    assertTrue(xml.contains("type=\"Arrival Rate\""), xml);
+    assertTrue(xml.contains("referenceNode=\"fj\""),
+        "the arrival measure must stay on the fork station, not fj__join: " + xml);
+    assertFalse(xml.contains("referenceNode=\"fj__join\" type=\"Arrival Rate\""), xml);
   }
 }
