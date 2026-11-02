@@ -28,7 +28,7 @@ class HeadlessSmokeTest {
 
   @Test
   void jmtDispatcherClassLoadsUnderJava17() throws Exception {
-    Class<?> dispatcher = Class.forName("jmt.engine.simDispatcher.DispatcherJSIMschema");
+    Class<?> dispatcher = Class.forName("simDispatcher.DispatcherJSIMschema");
     assertNotNull(dispatcher);
   }
 }

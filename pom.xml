@@ -24,9 +24,9 @@
     <dependency>
       <groupId>jmt</groupId>
       <artifactId>jmt-singlejar</artifactId>
-      <version>1.4.0</version>
+      <version>1.5.0</version>
       <scope>system</scope>
-      <systemPath>${project.basedir}/lib/JMT-singlejar-1.4.0.jar</systemPath>
+      <systemPath>${project.basedir}/lib/JMT-singlejar-1.5.0.jar</systemPath>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>

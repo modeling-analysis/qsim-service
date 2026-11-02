@@ -8,9 +8,9 @@ version. See the LICENSE file for the full text.
 
 This product bundles and links, in-process, the following GPL software:
 
-  Java Modelling Tools (JMT) 1.4.0 — https://jmt.sourceforge.net/
+  Java Modelling Tools (JMT) 1.5.0 — https://jmt.sourceforge.net/
   Copyright (C) the JMT authors. Licensed under the GNU GPL v2 or later.
-  The bundled artifact (lib/JMT-singlejar-1.4.0.jar) is unmodified.
+  The bundled artifact (lib/JMT-singlejar-1.5.0.jar) is unmodified.
 
 Because this service links JMT engine classes in-process, it is a derivative
 work and is therefore distributed under the GPL (v2 or later). The complete

@@ -14,7 +14,7 @@ optimizer) never touch JMT code. See `NOTICE`.
 mvn package            # runs the full test suite (requires the JMT engine, headless)
 ```
 
-The unmodified `JMT-singlejar-1.4.0.jar` is bundled in `lib/` and referenced as a
+The unmodified `JMT-singlejar-1.5.0.jar` is bundled in `lib/` and referenced as a
 system-scoped Maven dependency.
 
 ## Run
@@ -39,7 +39,7 @@ explicitly:
 
 ```bash
 mvn package
-java -cp "target/qsim-service.jar:target/dependency/*:lib/JMT-singlejar-1.4.0.jar" \
+java -cp "target/qsim-service.jar:target/dependency/*:lib/JMT-singlejar-1.5.0.jar" \
      qsim.http.App
 ```
 
@@ -47,7 +47,7 @@ The jar has no `Main-Class`, so run it with `-cp` and the main class rather than
 `java -jar`. Override the port and other settings with the env vars below:
 
 ```bash
-QSIM_PORT=9090 java -cp "target/qsim-service.jar:target/dependency/*:lib/JMT-singlejar-1.4.0.jar" \
+QSIM_PORT=9090 java -cp "target/qsim-service.jar:target/dependency/*:lib/JMT-singlejar-1.5.0.jar" \
      qsim.http.App
 ```
 

@@ -75,7 +75,15 @@ public class SolutionsParser {
         // real regression and must stay visible.
         Double lower = parseD(m.getAttribute("lowerLimit"));
         Double upper = parseD(m.getAttribute("upperLimit"));
-        String jmtType = m.getAttribute("measureType");
+        // JMT 1.5.0 renamed the output attribute `measureType` to `type` (its SIMmodeloutput.xsd
+        // still declares `measureType` -- the bundled schemas are stale again). Read `type` first
+        // and fall back to `measureType`, mirroring JMT's own common.xml.XMLResultsReader, so
+        // output written by 1.4.0 still parses. Without this every measure arrives untyped and is
+        // silently dropped from the response rather than failing.
+        String jmtType = m.getAttribute("type");
+        if (jmtType.isEmpty()) {
+          jmtType = m.getAttribute("measureType");
+        }
 
         // Which attribute holds the mean depends on the measure. For an InverseMeasure JMT reports
         // meanValue = 1/E[sample] while `mean`, `variance` and `standardDeviation` describe the raw

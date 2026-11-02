@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
-import jmt.engine.simDispatcher.DispatcherJSIMschema;
+import simDispatcher.DispatcherJSIMschema;
 
 /**
  * The ONLY class in the service that imports {@code jmt.*} — the licensing/quarantine boundary.

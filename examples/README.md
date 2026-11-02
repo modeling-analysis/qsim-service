@@ -18,7 +18,7 @@ docker stop qsim
 # Option B — local jar (faster iteration)
 mvn -q -DskipTests package
 java -Djava.awt.headless=true \
-  -cp "target/qsim-service.jar:target/dependency/*:lib/JMT-singlejar-1.4.0.jar" \
+  -cp "target/qsim-service.jar:target/dependency/*:lib/JMT-singlejar-1.5.0.jar" \
   qsim.http.App &
 ```
 
