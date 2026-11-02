@@ -17,9 +17,9 @@ package qsim.distribution;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import jmt.engine.random.GammaDistr;
-import jmt.engine.random.GammaDistrPar;
-import jmt.engine.random.engine.MersenneTwister;
+import random.GammaDistr;
+import random.GammaDistrPar;
+import random.engine.MersenneTwister;
 import org.junit.jupiter.api.Test;
 import qsim.model.Distribution;
 

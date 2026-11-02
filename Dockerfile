@@ -19,7 +19,7 @@ WORKDIR /app
 COPY --from=build /src/target/qsim-service.jar app.jar
 COPY --from=build /src/target/dependency/ dependency/
 # System-scoped JMT is excluded from copy-dependencies; bring it explicitly.
-COPY --from=build /src/lib/JMT-singlejar-1.4.0.jar dependency/JMT-singlejar-1.4.0.jar
+COPY --from=build /src/lib/JMT-singlejar-1.5.0.jar dependency/JMT-singlejar-1.5.0.jar
 COPY NOTICE LICENSE ./
 ENV QSIM_PORT=8080
 EXPOSE 8080

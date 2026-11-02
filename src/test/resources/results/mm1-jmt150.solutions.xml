@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- JMT 1.5.0 output shape: the measure type is in `type`, not `measureType`. -->
+<solutions modelName="mm1" solutionMethod="simulation">
+  <measure type="Utilization" station="q" class="web" nodeType="station"
+           meanValue="0.5012" lowerLimit="0.4901" upperLimit="0.5123"
+           successful="true" analyzedSamples="45000" discardedSamples="1200"
+           precision="0.0221" alfa="0.05" maxSamples="1000000"/>
+  <measure type="Response Time" station="q" class="web" nodeType="station"
+           meanValue="2.01" lowerLimit="1.95" upperLimit="2.07"
+           successful="true" analyzedSamples="45000" discardedSamples="1200"
+           precision="0.03" alfa="0.05" maxSamples="1000000"/>
+</solutions>

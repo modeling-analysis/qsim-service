@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import jmt.engine.simDispatcher.DispatcherJSIMschema;
+import simDispatcher.DispatcherJSIMschema;
 import org.junit.jupiter.api.Test;
 
 class EngineEndToEndTest {

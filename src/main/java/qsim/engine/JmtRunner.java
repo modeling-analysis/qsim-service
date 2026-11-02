@@ -20,10 +20,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
-import jmt.engine.simDispatcher.DispatcherJSIMschema;
+import simDispatcher.DispatcherJSIMschema;
 
 /**
- * The ONLY class in the service that imports {@code jmt.*} — the licensing/quarantine boundary.
+ * The ONLY class in the service that directly imports JMT engine classes — the licensing/quarantine boundary.
  *
  * <p>Each {@link #run} call constructs a fresh {@link DispatcherJSIMschema}, giving each
  * simulation clean engine state (spec §4 residual note); a subprocess fallback is deferred unless

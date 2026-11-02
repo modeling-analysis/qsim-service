@@ -32,6 +32,17 @@ class SolutionsParserTest {
   }
 
   @Test
+  void readsTheMeasureTypeFromTheJmt150TypeAttribute() throws Exception {
+    // JMT 1.5.0 writes the measure type as `type`; 1.4.0 wrote `measureType` (the other fixtures).
+    SolutionsParser.Parsed p =
+        new SolutionsParser().parse(resource("/results/mm1-jmt150.solutions.xml"));
+    assertEquals(2, p.measures().size());
+    assertEquals("utilization", p.measures().get(0).type());
+    assertEquals(0.5012, p.measures().get(0).mean());
+    assertEquals("response-time", p.measures().get(1).type());
+  }
+
+  @Test
   void parsesMeasuresAndMapsTypeAndStation() throws Exception {
     SolutionsParser.Parsed p = new SolutionsParser().parse(resource("/results/mm1.solutions.xml"));
     assertEquals(4, p.measures().size());
