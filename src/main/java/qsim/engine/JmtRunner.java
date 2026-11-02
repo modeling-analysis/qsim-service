@@ -23,7 +23,7 @@ import java.util.Comparator;
 import simDispatcher.DispatcherJSIMschema;
 
 /**
- * The ONLY class in the service that imports {@code jmt.*} — the licensing/quarantine boundary.
+ * The ONLY class in the service that directly imports JMT engine classes — the licensing/quarantine boundary.
  *
  * <p>Each {@link #run} call constructs a fresh {@link DispatcherJSIMschema}, giving each
  * simulation clean engine state (spec §4 residual note); a subprocess fallback is deferred unless

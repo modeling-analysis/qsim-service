@@ -12,5 +12,5 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
  */
-// the only package that imports jmt.*
+// the only package that directly imports JMT engine classes
 package qsim.engine;
