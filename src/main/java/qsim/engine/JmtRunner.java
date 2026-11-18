@@ -37,6 +37,14 @@ public class JmtRunner {
       model = File.createTempFile("qsim-model-", ".xml");
       Files.writeString(model.toPath(), jsimgXml, StandardCharsets.UTF_8);
 
+      // KNOWN LEAK (not fixed): DispatcherJSIMschema.solveModel() creates a single-thread executor
+      // for the max-duration watchdog after Simulation.initialize(), and calls shutdownNow() only on
+      // its success path (it has no exception handling). So a failure thrown from Simulation.run()
+      // leaves one non-daemon "pool-N-thread-1" per failed run: it sleeps up to maxWallClockSeconds,
+      // aborts the measures, then idles until the JVM exits. Load- and initialize-time failures
+      // happen before the executor exists and do not leak. killSimulation() was verified NOT to stop
+      // it (it only terminates the net system when simStarted), so it is deliberately not called.
+      // A real fix needs reflection on JMT internals or a subprocess engine; both are deferred.
       DispatcherJSIMschema dispatcher = new DispatcherJSIMschema(model);
       dispatcher.setSimulationSeed(seed);
       dispatcher.setTerminalSimulation(terminal);

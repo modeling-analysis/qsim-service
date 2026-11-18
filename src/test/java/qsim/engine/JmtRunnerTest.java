@@ -66,8 +66,13 @@ class JmtRunnerTest {
     return out;
   }
 
+  /**
+   * Covers load- and initialize-time failures only, which occur before JMT starts its watchdog
+   * executor. A run-time failure (exception from Simulation.run()) does leak a thread; see the
+   * KNOWN LEAK comment in {@link JmtRunner#run}.
+   */
   @Test
-  void failedRunLeavesNoWatchdogThread() throws Exception {
+  void loadFailureLeavesNoWatchdogThread() throws Exception {
     String xml;
     try (var in = getClass().getResourceAsStream("/models/fcr-forkjoin.sim.xml")) {
       xml = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
