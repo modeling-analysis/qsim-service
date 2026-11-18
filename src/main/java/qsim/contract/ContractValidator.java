@@ -205,8 +205,8 @@ public class ContractValidator {
                 + rn + "')");
           }
           // A partial join lets the merged parent leave, and so decrement the occupancy, while
-          // sibling tasks still hold branch servers inside the region.
-          if (n instanceof ForkJoinNode f && !"all".equals(f.join())) {
+          // sibling tasks still hold branch servers inside the region. An omitted join means "all".
+          if (n instanceof ForkJoinNode f && f.join() != null && !"all".equals(f.join())) {
             errors.add(label + ": fork-join '" + member + "' must use join \"all\" inside a region");
           }
           // Unverified whether a job dropped inside a region decrements its occupancy; if not,

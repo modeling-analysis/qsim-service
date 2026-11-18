@@ -179,6 +179,11 @@ class RegionValidationTest {
   }
 
   @Test
+  void acceptsDefaultJoinMember() {
+    accepts(model(queue("q1", null, "a"), fj(null), List.of(valid()), List.of(), List.of(), Map.of()));
+  }
+
+  @Test
   void rejectsFiniteCapacityQueueMember() {
     NetworkModel m = model(queue("q1", 5, "a"), fj("all"), List.of(valid()), List.of(), List.of(), Map.of());
     rejects(m, "'q1'", "capacity");
