@@ -178,7 +178,13 @@ public class ContractValidator {
     }
     Map<String, String> memberOf = new HashMap<>();
 
-    for (Region r : model.regions()) {
+    for (int ri = 0; ri < model.regions().size(); ri++) {
+      Region r = model.regions().get(ri);
+      // "regions": [null] is valid JSON and binds; without this it was an NPE and so a 500.
+      if (r == null) {
+        errors.add("regions[" + ri + "] must not be null");
+        continue;
+      }
       String rn = r.name();
       checkName(errors, "region name", rn);
       String label = "region '" + rn + "'";

@@ -226,4 +226,10 @@ class RegionValidationTest {
     }
     accepts(model(List.of(region("fj__b2", List.of("q1", "fj", "q2"), 1))));
   }
+
+  @Test
+  void rejectsANullRegionEntry() {
+    // "regions": [null] binds fine; dereferencing it was an NPE, so a 500 instead of a 422 (PR #20).
+    rejects(model(java.util.Arrays.asList(valid(), null)), "regions[1]", "null");
+  }
 }
