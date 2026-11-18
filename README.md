@@ -22,7 +22,8 @@ The first build on a machine needs network access, because Maven has to fetch
 `qsim.build.JmtFcrPatcher` after compilation: it rewrites `simEngine.Simulation` (six
 instructions in `initialize()`, so a finite capacity region may contain fork-joins) and writes the
 patched class into `target/classes`, ahead of the jar on the classpath. The jar in `lib/` itself is
-unmodified, and the build fails if JMT's class has changed.
+unmodified, and the build fails if the jar or its `Simulation` class differs from the pinned
+SHA-256 (a JMT upgrade must redo the patch deliberately).
 
 ## Run
 
@@ -261,6 +262,6 @@ workflow above (each point averaged over independent seeds). See
 | Status | Meaning |
 |--------|---------|
 | 400 | Malformed JSON, or unsupported measure type, including a `region-*` measure on a model without regions |
-| 422 | Semantic model error (dangling routing, open class without a source, probabilities not summing to 1, a class that reaches a non-sink node with no edge out of it, a routing key that is not a declared class, a closed class whose referenceStation does not exist, or an invalid region: empty or non-queue/delay/fork-join members, a member node that does not exist, a node in two regions, a duplicate or colliding region name, `capacity` < 1, a bad `classCapacity` or `whenFull`, a fork-join member with a partial `join`, a member queue with `capacity`, a closed class routed into a region) or JSIMG schema failure |
+| 422 | Semantic model error (dangling routing, open class without a source, probabilities not summing to 1, a class that reaches a non-sink node with no edge out of it, a routing key that is not a declared class, a closed class whose referenceStation does not exist, or an invalid region: a null entry in `regions`, empty or non-queue/delay/fork-join members, a member node that does not exist, a node in two regions, a duplicate region name or one colliding with a node, a generated fork-join station or JMT's `<name>_inputStation`, `capacity` < 1, a bad `classCapacity` or `whenFull`, a fork-join member with a partial `join`, a member queue with `capacity`, a closed class routed into a region) or JSIMG schema failure |
 | 500 | Simulation engine failure |
 | 200 + `completed:false` | Watchdog fired before convergence — partial measures |

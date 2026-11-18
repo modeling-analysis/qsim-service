@@ -1,7 +1,7 @@
 # Design Spec: finite capacity regions (bounded subnetworks)
 
 Date: 2026-11-18
-Status: Draft, pending Asser's approval.
+Status: Approved 2026-11-18; implemented in PR #20. See §13 for the as-built differences.
 
 Context: qsim models an open (or closed) network of independent stations; each station is
 configured on its own. This adds the first relationship *between* stations: a set of
@@ -459,3 +459,51 @@ About 5–6.5 days:
 2. Whether `killSimulation()` stops the max-duration watchdog thread.
 3. The plugin versions to pin (exec-maven-plugin, and jar/dependency for `package`); fetch them online once.
 4. G8's Erlang-B match (the first delay-member run).
+
+## 13. As-built notes (PR #20)
+
+Where the implementation differs from or settles what is written above. This section wins over
+the earlier sections.
+
+**§12 open items, resolved**
+1. **Region measure station.** JMT writes `station="<region name>"`, `nodeType="region"`, with no
+   `_inputStation` suffix. The parser keeps the name as-is.
+2. **`killSimulation()` does not stop the watchdog, and the leak is not bounded** (this corrects
+   §3 "Engine-failure path" and §6.2).
+   - `DispatcherJSIMschema.solveModel` creates its watchdog executor *after*
+     `Simulation.initialize()` and shuts it down only on the success path.
+   - Load- and initialize-time failures therefore leak nothing.
+   - An exception from `Simulation.run()` leaks one non-daemon `pool-N-thread-1` per failure. It
+     sleeps for `maxWallClockSeconds`, then idles until the JVM exits.
+   - This is documented in `JmtRunner` and the README. `JmtRunnerTest.loadFailureLeavesNoWatchdogThread`
+     guards the non-leaking path. A fix needs reflection on JMT internals or a subprocess engine.
+3. **Plugins.** exec-maven-plugin 3.5.0 and maven-jar-plugin 3.4.2, fetched online once.
+4. **G8.** Matched Erlang B.
+
+**Behaviour added during review**
+- **`interarrival-time` rows are omitted at region entries** (a new §5.2 rule). At a member
+  where a class enters the region, JMT's `Arrival Rate` counts each arrival twice: once when the
+  member's `Queue` redirects the job to `<region>_inputStation`, and again on admission. A
+  non-binding cap-1000 region reported 0.998 against a true 2.0, with `success=true`. The mapper
+  therefore omits that (node, class) row. Interior members and every other station measure are
+  unaffected, bit-identical under a non-binding region. Omission rather than a 422 is deliberate:
+  a 422 would block the measure for the whole model.
+- **The build guard is stricter than §6.1.** The patcher pins the SHA-256 of the whole jar as
+  well as of `Simulation.class`, and requires each rewrite kind (instanceof, checkcast drop,
+  invoke) exactly twice, rather than 6 in total. `FcrPatchCheck` is tested in both directions;
+  the stock class loaded from the jar alone is rejected.
+- **More §5.3 rejections:**
+  - a region name equal to a generated fork-join station (`<fj>__b<i>`, `<fj>__join`);
+  - a null entry in `regions`;
+  - an omitted fork-join `join`, which is treated as `"all"` (it is accepted, like an explicit
+    `"all"`).
+
+**Corrected rationale (§5.3).** Both restrictions stay in v1, as conservative choices, but the
+stated reasons were partly wrong:
+- JMT's `Queue` preload *does* call `increaseOccupation`, so a population preloaded onto a member
+  is counted.
+- A finite-capacity member queue *does* call `decreaseOccupation` on a drop (Queue bytecode about
+  offset 1125).
+
+Lifting either restriction needs only a golden test, not new machinery.
+
