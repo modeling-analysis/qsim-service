@@ -257,4 +257,20 @@ class ContractValidatorTest {
     assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[aa]") && s.contains("not a declared class")),
         ex.details().toString());
   }
+
+  @Test
+  void rejectsAClosedClassWhoseExplicitReferenceStationDoesNotExist() {
+    // Without this check the request passes contract and XSD validation, and JMT only logs
+    // "could not find entity ghost" and returns zero-sample, unsuccessful measures, not a 422.
+    NetworkModel m = new NetworkModel("closed-ghost",
+        List.of(new JobClass("batch", "closed", 3, "ghost")),
+        List.of(
+            new DelayNode("think", "delay", Map.of("batch", new ServiceSpec(exp(0.2)))),
+            new QueueNode("q", "queue", 1, "fcfs", null, Map.of("batch", new ServiceSpec(exp(3.0))))),
+        Map.of("batch", List.of(new RoutingEdge("think", "q", null), new RoutingEdge("q", "think", null))));
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(m)));
+    assertEquals(ValidationException.Kind.UNPROCESSABLE, ex.kind());
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("batch") && s.contains("referenceStation")
+        && s.contains("'ghost'")), ex.details().toString());
+  }
 }

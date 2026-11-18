@@ -87,6 +87,12 @@ public class ContractValidator {
         if (c.population() == null || c.population() < 1) {
           errors.add("closed class '" + c.name() + "' must have a population >= 1");
         }
+        // Nothing downstream catches this: the JSIMG is schema-valid, and JMT only logs
+        // "could not find entity" and returns zero-sample, unsuccessful measures.
+        if (c.referenceStation() != null && !nodeNames.contains(c.referenceStation())) {
+          errors.add("closed class '" + c.name() + "': referenceStation '" + c.referenceStation()
+              + "' does not exist");
+        }
       } else {
         errors.add("class '" + c.name() + "': type must be 'open' or 'closed'");
       }
@@ -195,7 +201,8 @@ public class ContractValidator {
       }
       edges.forEach(e -> reached.add(e.to()));
       for (String n : reached) {
-        // Unknown names are already reported by the routing checks above.
+        // Unknown names are reported elsewhere: edge endpoints by the routing checks (which covers a
+        // reference defaulted to an edge source) and an explicit referenceStation by the class checks.
         if (nodeNames.contains(n) && !sinks.contains(n) && !exits.contains(n)) {
           errors.add("routing[" + c.name() + "]: class reaches '" + n
               + "' but has no edge out of it");
