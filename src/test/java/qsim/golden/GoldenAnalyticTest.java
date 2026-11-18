@@ -177,4 +177,53 @@ class GoldenAnalyticTest {
     assertTrue(sys.mean() >= singleBranchET * 0.95,
         "fork-join E[T]=" + sys.mean() + " must be >= slowest-branch E[T]=" + singleBranchET);
   }
+
+  /**
+   * Issue #18: two classes leave {@code src} by different single edges (a -> qa, b -> qb). JSIMG
+   * connections are class-agnostic, so a RandomStrategy router at src would split each class 50/50
+   * across qa and qb: both queues would see the mixed rate 0.75, and every number below would be
+   * wrong with no error. With correct routing each queue is an independent M/M/1 for its own class.
+   */
+  @Test
+  void multiClassDisjointRoutesKeepEachClassOnItsOwnStream() {
+    double la = 1.0, lb = 0.5, mua = 2.0, mub = 4.0;
+    Map<String, ServiceSpec> qaService = Map.of(
+        "a", new ServiceSpec(named("exponential", mua)), "b", new ServiceSpec(named("exponential", mua)));
+    Map<String, ServiceSpec> qbService = Map.of(
+        "a", new ServiceSpec(named("exponential", mub)), "b", new ServiceSpec(named("exponential", mub)));
+    NetworkModel m = new NetworkModel("disjoint",
+        List.of(new JobClass("a", "open", null, null), new JobClass("b", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of(
+                    "a", new ArrivalSpec(named("exponential", la)),
+                    "b", new ArrivalSpec(named("exponential", lb)))),
+                new QueueNode("qa", "queue", 1, "fcfs", null, qaService),
+                new QueueNode("qb", "queue", 1, "fcfs", null, qbService),
+                new SinkNode("snk", "sink")),
+        Map.of("a", List.of(new RoutingEdge("src", "qa", null), new RoutingEdge("qa", "snk", null)),
+               "b", List.of(new RoutingEdge("src", "qb", null), new RoutingEdge("qb", "snk", null))));
+    Stopping s = new Stopping(0.05, 0.03, 50_000, 2_000_000, null, null, 120, false);
+    SimulationResponse r = service.simulate(new SimulationRequest(m, 20261118L, s,
+        List.of("throughput", "response-time", "system-response-time")));
+
+    for (String[] stray : new String[][] {{"qa", "b"}, {"qb", "a"}}) {
+      MeasureResult x = pick(r, stray[0], stray[1], "throughput");
+      assertTrue(x.mean() == null || x.mean() == 0.0,
+          "class " + stray[1] + " is never routed to " + stray[0] + " but has throughput " + x.mean());
+    }
+    assertBrackets(pick(r, "qa", "a", "throughput"), la);
+    assertBrackets(pick(r, "qb", "b", "throughput"), lb);
+    assertBrackets(pick(r, "qa", "a", "response-time"), 1 / (mua - la));         // 1.0
+    assertBrackets(pick(r, "qb", "b", "response-time"), 1 / (mub - lb));         // 0.2857
+    assertBrackets(pick(r, null, "a", "system-response-time"), 1 / (mua - la));
+    assertBrackets(pick(r, null, "b", "system-response-time"), 1 / (mub - lb));
+  }
+
+  /** A measure by station (null = system-level, any station) and class. */
+  private MeasureResult pick(SimulationResponse r, String station, String clazz, String type) {
+    return r.measures().stream()
+        .filter(m -> m.type().equals(type) && clazz.equals(m.jobClass())
+            && (station == null || station.equals(m.station())))
+        .findFirst().orElseThrow(() -> new AssertionError(
+            "missing measure " + type + " for class " + clazz + " at " + station));
+  }
 }

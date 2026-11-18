@@ -87,6 +87,12 @@ public class ContractValidator {
         if (c.population() == null || c.population() < 1) {
           errors.add("closed class '" + c.name() + "' must have a population >= 1");
         }
+        // Nothing downstream catches this: the JSIMG is schema-valid, and JMT only logs
+        // "could not find entity" and returns zero-sample, unsuccessful measures.
+        if (c.referenceStation() != null && !nodeNames.contains(c.referenceStation())) {
+          errors.add("closed class '" + c.name() + "': referenceStation '" + c.referenceStation()
+              + "' does not exist");
+        }
       } else {
         errors.add("class '" + c.name() + "': type must be 'open' or 'closed'");
       }
@@ -94,8 +100,14 @@ public class ContractValidator {
 
     // Routing: targets exist; probabilities sum to 1 per (node, class).
     Map<String, List<RoutingEdge>> routing = model.routing() == null ? Map.of() : model.routing();
+    Set<String> classNames = model.classes().stream().map(JobClass::name).collect(Collectors.toSet());
     for (Map.Entry<String, List<RoutingEdge>> e : routing.entrySet()) {
       String clazz = e.getKey();
+      if (!classNames.contains(clazz)) {
+        // The writer emits a connection for every routing entry, so an undeclared key (a typo)
+        // would add physical links that other classes' routers could spread traffic over.
+        errors.add("routing[" + clazz + "]: '" + clazz + "' is not a declared class");
+      }
       Map<String, List<RoutingEdge>> byFrom = new HashMap<>();
       for (RoutingEdge edge : e.getValue()) {
         if (!nodeNames.contains(edge.from())) {
@@ -128,8 +140,74 @@ public class ContractValidator {
       }
     }
 
+    checkEveryReachedNodeHasAnExit(errors, model, routing, nodeNames);
+
     if (!errors.isEmpty()) {
       throw new ValidationException(ValidationException.Kind.UNPROCESSABLE, errors);
+    }
+  }
+
+  /**
+   * The station a closed class's population starts at (spec section 5.3): its explicit
+   * {@code referenceStation}, else its delay node if it has one, else the source of its first
+   * routing edge. Returns null when none applies. The writer preloads onto exactly this node, so
+   * it must be the one validation treats as reached.
+   */
+  public static String referenceStationOf(NetworkModel model, JobClass c) {
+    if (c.referenceStation() != null) {
+      return c.referenceStation();
+    }
+    for (Node n : model.nodes()) {
+      if (n instanceof DelayNode d && d.service() != null && d.service().containsKey(c.name())) {
+        return d.name();
+      }
+    }
+    List<RoutingEdge> edges = model.routing() == null ? List.of()
+        : model.routing().getOrDefault(c.name(), List.of());
+    return edges.isEmpty() ? null : edges.get(0).from();
+  }
+
+  /**
+   * A class must be able to leave every non-sink node it reaches. JSIMG connections are
+   * class-agnostic, so the writer gives a class with no edges out of a node a RandomStrategy
+   * router, which would send that class down whatever edges OTHER classes declared there: a silent
+   * cross-class leak (issue #18). If no class leaves the node, the job is simply stuck.
+   *
+   * <p>A class reaches its source (open), its reference station (closed; explicit or defaulted,
+   * see {@link #referenceStationOf}), and the target
+   * of each of its edges. Counting the target of every edge, not only the edges reachable from the
+   * entry point, is deliberately strict: an edge into a dead end is a broken model even when no
+   * job happens to take it.
+   */
+  private static void checkEveryReachedNodeHasAnExit(List<String> errors, NetworkModel model,
+      Map<String, List<RoutingEdge>> routing, Set<String> nodeNames) {
+    Set<String> sinks = model.nodes().stream()
+        .filter(n -> n instanceof SinkNode).map(Node::name).collect(Collectors.toSet());
+    for (JobClass c : model.classes()) {
+      List<RoutingEdge> edges = routing.getOrDefault(c.name(), List.of());
+      Set<String> exits = edges.stream().map(RoutingEdge::from).collect(Collectors.toSet());
+      Set<String> reached = new java.util.LinkedHashSet<>();
+      for (Node n : model.nodes()) {
+        if ("open".equals(c.type()) && n instanceof SourceNode s
+            && s.arrivals() != null && s.arrivals().containsKey(c.name())) {
+          reached.add(n.name());
+        }
+      }
+      if ("closed".equals(c.type())) {
+        String ref = referenceStationOf(model, c);
+        if (ref != null) {     // null: the writer reports it as undeterminable
+          reached.add(ref);
+        }
+      }
+      edges.forEach(e -> reached.add(e.to()));
+      for (String n : reached) {
+        // Unknown names are reported elsewhere: edge endpoints by the routing checks (which covers a
+        // reference defaulted to an edge source) and an explicit referenceStation by the class checks.
+        if (nodeNames.contains(n) && !sinks.contains(n) && !exits.contains(n)) {
+          errors.add("routing[" + c.name() + "]: class reaches '" + n
+              + "' but has no edge out of it");
+        }
+      }
     }
   }
 

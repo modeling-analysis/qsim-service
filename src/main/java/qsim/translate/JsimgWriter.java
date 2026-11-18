@@ -25,6 +25,7 @@ import javax.xml.validation.SchemaFactory;
 import javax.xml.validation.Validator;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
+import qsim.contract.ContractValidator;
 import qsim.contract.ValidationException;
 import qsim.distribution.CanonicalDistribution;
 import qsim.distribution.DistParam;
@@ -130,27 +131,25 @@ public class JsimgWriter {
    * reads {@code referenceSource} for both open and closed classes).
    */
   protected void writeClosedUserClass(Element sim, NetworkModel model, JobClass c) {
-    String ref = c.referenceStation() != null ? c.referenceStation() : defaultReference(model, c.name());
+    String ref = referenceStation(model, c);
     Xml.child(sim, "userClass",
         "name", c.name(), "type", "closed", "priority", "0",
         "customers", c.population().toString(),
         "referenceSource", ref);
   }
 
-  /** Section 5.3: default to the class's delay node if present, else its first routed station. */
-  private String defaultReference(NetworkModel model, String className) {
-    for (Node n : model.nodes()) {
-      if (n instanceof DelayNode d && d.service().containsKey(className)) {
-        return d.name();
-      }
+  /**
+   * The station a closed class's population is preloaded onto. The default rule lives in
+   * {@link ContractValidator#referenceStationOf} so that validation checks the very node the
+   * writer preloads.
+   */
+  private String referenceStation(NetworkModel model, JobClass c) {
+    String ref = ContractValidator.referenceStationOf(model, c);
+    if (ref == null) {
+      throw new ValidationException(ValidationException.Kind.UNPROCESSABLE,
+          List.of("cannot determine referenceStation for closed class '" + c.name() + "'"));
     }
-    List<RoutingEdge> edges = model.routing() == null ? List.of()
-        : model.routing().getOrDefault(className, List.of());
-    if (!edges.isEmpty()) {
-      return edges.get(0).from();
-    }
-    throw new ValidationException(ValidationException.Kind.UNPROCESSABLE,
-        List.of("cannot determine referenceStation for closed class '" + className + "'"));
+    return ref;
   }
 
   /**
@@ -163,7 +162,7 @@ public class JsimgWriter {
     var byStation = new java.util.LinkedHashMap<String, java.util.List<JobClass>>();
     for (JobClass c : model.classes()) {
       if ("closed".equals(c.type())) {
-        String ref = c.referenceStation() != null ? c.referenceStation() : defaultReference(model, c.name());
+        String ref = referenceStation(model, c);
         byStation.computeIfAbsent(ref, k -> new java.util.ArrayList<>()).add(c);
       }
     }
@@ -485,6 +484,7 @@ public class JsimgWriter {
     // set membership against the model's actual ForkJoinNodes (not a "__join" string-suffix
     // heuristic), so a user-named node that happens to end in "__join" is never misrouted.
     String routingKey = joinRoutingKey(model, fromNode);
+    Set<String> connected = connectionTargets(model, routingKey);
     Element section = Xml.child(node, "section", "className", "Router");
     Element param = Xml.child(section, "parameter",
         "classPath", "jmt.engine.NetStrategies.RoutingStrategy",
@@ -493,7 +493,18 @@ public class JsimgWriter {
       List<RoutingEdge> edges = outEdges(model, c.name(), routingKey);
       Element refClass = Xml.child(param, "refClass");
       refClass.appendChild(refClass.getOwnerDocument().createTextNode(c.name()));
-      if (edges.size() <= 1) {
+      // RandomStrategy picks uniformly among ALL of this node's connections, and connections are
+      // class-agnostic (the union of every class's edges; see writeConnections). So it is exact
+      // only when this class's single edge is the node's only connection, or when the class has
+      // no domain edges here at all (a branch station's lone link to its join; a node the class
+      // never reaches, which ContractValidator guarantees). Anything else needs a table naming
+      // only this class's destinations, or the class leaks onto other classes' edges (issue #18).
+      // Keeping RandomStrategy where it is exact matters: with one connection it draws no random
+      // number, while EmpiricalStrategy always draws one, so every model that was already right
+      // stays byte-identical and keeps its seeded results.
+      boolean randomIsExact = edges.isEmpty()
+          || (edges.size() == 1 && connected.equals(Set.of(edges.get(0).to())));
+      if (randomIsExact) {
         Xml.child(param, "subParameter",
             "classPath", "jmt.engine.NetStrategies.RoutingStrategies.RandomStrategy",
             "name", "Random");
@@ -508,7 +519,10 @@ public class JsimgWriter {
               "classPath", "jmt.engine.random.EmpiricalEntry", "name", "EmpiricalEntry");
           Xml.textEl(Xml.child(entry, "subParameter", "classPath", "java.lang.String", "name", "stationName"),
               "value", edge.to());
-          double prob = edge.probability() == null ? 1.0 / edges.size() : edge.probability();
+          // A lone edge is probability 1.0 whatever the caller wrote; ContractValidator only checks
+          // the sum when a class has two or more edges out of a node.
+          double prob = edges.size() == 1 ? 1.0
+              : edge.probability() == null ? 1.0 / edges.size() : edge.probability();
           Xml.textEl(Xml.child(entry, "subParameter", "classPath", "java.lang.Double", "name", "probability"),
               "value", Double.toString(prob));
         }
@@ -530,6 +544,28 @@ public class JsimgWriter {
       }
     }
     return fromNode;
+  }
+
+  /**
+   * The targets of the {@code <connection>}s that {@link #writeConnections} emits out of the node
+   * whose domain routing key is {@code routingKey}: the union of every routing entry's out-edges there.
+   * Empty for writer-internal stations (fork branches), whose links are not domain edges.
+   */
+  private static Set<String> connectionTargets(NetworkModel model, String routingKey) {
+    // Every routing entry, not only the declared classes: writeConnections emits a connection for
+    // each of them, and RandomStrategy spreads over whatever connections exist. ContractValidator
+    // rejects undeclared keys; this keeps the writer consistent with itself regardless.
+    Set<String> targets = new java.util.HashSet<>();
+    if (model.routing() != null) {
+      for (List<RoutingEdge> edges : model.routing().values()) {
+        for (RoutingEdge e : edges) {
+          if (e.from().equals(routingKey)) {
+            targets.add(e.to());
+          }
+        }
+      }
+    }
+    return targets;
   }
 
   private static List<RoutingEdge> outEdges(NetworkModel model, String className, String fromNode) {

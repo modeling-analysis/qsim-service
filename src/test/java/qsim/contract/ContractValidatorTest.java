@@ -174,4 +174,103 @@ class ContractValidatorTest {
       assertDoesNotThrow(() -> validator.validate(req(m)), "must accept node name '" + ok + "'");
     }
   }
+
+  // ---- issue #18: a class must be able to leave every non-sink node it reaches -----------------
+
+  /** Two open classes on disjoint routes out of one source; {@code bRoutes} is class b's routing. */
+  private NetworkModel twoClass(List<RoutingEdge> bRoutes) {
+    Map<String, ServiceSpec> both = Map.of("a", new ServiceSpec(exp(2.0)), "b", new ServiceSpec(exp(2.0)));
+    return new NetworkModel("two",
+        List.of(new JobClass("a", "open", null, null), new JobClass("b", "open", null, null)),
+        List.of(
+            new SourceNode("src", "source", Map.of("a", new ArrivalSpec(exp(1.0)), "b", new ArrivalSpec(exp(1.0)))),
+            new QueueNode("qa", "queue", 1, "fcfs", null, both),
+            new QueueNode("qb", "queue", 1, "fcfs", null, both),
+            new SinkNode("snk", "sink")),
+        Map.of("a", List.of(new RoutingEdge("src", "qa", null), new RoutingEdge("qa", "snk", null)),
+               "b", bRoutes));
+  }
+
+  @Test
+  void acceptsClassesOnDisjointRoutes() {
+    assertDoesNotThrow(() -> validator.validate(req(twoClass(
+        List.of(new RoutingEdge("src", "qb", null), new RoutingEdge("qb", "snk", null))))));
+  }
+
+  @Test
+  void rejectsAClassThatReachesANodeItCannotLeave() {
+    // b enters qb but has no edge out of it. The writer would hand b to whatever edges other
+    // classes declared at qb (none here, but in general a silent cross-class leak).
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(twoClass(
+        List.of(new RoutingEdge("src", "qb", null))))));
+    assertEquals(ValidationException.Kind.UNPROCESSABLE, ex.kind());
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[b]") && s.contains("'qb'")),
+        ex.details().toString());
+  }
+
+  @Test
+  void rejectsAnOpenClassWithNoEdgeOutOfItsSource() {
+    // b arrives at src but has no edge out of it: a RandomStrategy router would send b down a's
+    // edge src -> qa, exactly the class mixing of issue #18.
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(twoClass(
+        List.of()))));
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[b]") && s.contains("'src'")),
+        ex.details().toString());
+  }
+
+  @Test
+  void rejectsAClosedClassWhoseDefaultReferenceStationHasNoExit() {
+    // No explicit referenceStation, so the writer preloads the population onto the class's delay
+    // node "think". The class has no edge out of think, so its jobs start there and are stuck,
+    // or leak onto another class's edges. The validator must resolve the same default the writer uses.
+    NetworkModel m = new NetworkModel("closed-dead-end",
+        List.of(new JobClass("batch", "closed", 3, null)),
+        List.of(
+            new DelayNode("think", "delay", Map.of("batch", new ServiceSpec(exp(0.2)))),
+            new QueueNode("q", "queue", 1, "fcfs", null, Map.of("batch", new ServiceSpec(exp(3.0))))),
+        Map.of("batch", List.of(new RoutingEdge("q", "q", null))));
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(m)));
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[batch]") && s.contains("'think'")),
+        ex.details().toString());
+  }
+
+  @Test
+  void acceptsAClosedClassWhoseDefaultReferenceStationHasAnExit() {
+    NetworkModel m = new NetworkModel("closed-ok",
+        List.of(new JobClass("batch", "closed", 3, null)),
+        List.of(
+            new DelayNode("think", "delay", Map.of("batch", new ServiceSpec(exp(0.2)))),
+            new QueueNode("q", "queue", 1, "fcfs", null, Map.of("batch", new ServiceSpec(exp(3.0))))),
+        Map.of("batch", List.of(new RoutingEdge("think", "q", null), new RoutingEdge("q", "think", null))));
+    assertDoesNotThrow(() -> validator.validate(req(m)));
+  }
+
+  @Test
+  void rejectsARoutingKeyThatIsNotADeclaredClass() {
+    // The writer emits a physical connection for every routing entry, so an undeclared key such as a
+    // typo adds connections that the real classes' RandomStrategy routers would then spread over.
+    NetworkModel valid = twoClass(List.of(new RoutingEdge("src", "qb", null), new RoutingEdge("qb", "snk", null)));
+    Map<String, List<RoutingEdge>> routing = new java.util.HashMap<>(valid.routing());
+    routing.put("aa", List.of(new RoutingEdge("src", "qb", null)));
+    NetworkModel m = new NetworkModel(valid.name(), valid.classes(), valid.nodes(), routing);
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(m)));
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[aa]") && s.contains("not a declared class")),
+        ex.details().toString());
+  }
+
+  @Test
+  void rejectsAClosedClassWhoseExplicitReferenceStationDoesNotExist() {
+    // Without this check the request passes contract and XSD validation, and JMT only logs
+    // "could not find entity ghost" and returns zero-sample, unsuccessful measures, not a 422.
+    NetworkModel m = new NetworkModel("closed-ghost",
+        List.of(new JobClass("batch", "closed", 3, "ghost")),
+        List.of(
+            new DelayNode("think", "delay", Map.of("batch", new ServiceSpec(exp(0.2)))),
+            new QueueNode("q", "queue", 1, "fcfs", null, Map.of("batch", new ServiceSpec(exp(3.0))))),
+        Map.of("batch", List.of(new RoutingEdge("think", "q", null), new RoutingEdge("q", "think", null))));
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(m)));
+    assertEquals(ValidationException.Kind.UNPROCESSABLE, ex.kind());
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("batch") && s.contains("referenceStation")
+        && s.contains("'ghost'")), ex.details().toString());
+  }
 }
