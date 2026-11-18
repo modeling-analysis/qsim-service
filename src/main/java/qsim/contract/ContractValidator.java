@@ -71,6 +71,8 @@ public class ContractValidator {
       }
     }
 
+    checkRegions(errors, model, nodeNames);
+
     // Open class anchored to exactly one source.
     for (JobClass c : model.classes()) {
       if ("open".equals(c.type())) {
@@ -144,6 +146,131 @@ public class ContractValidator {
 
     if (!errors.isEmpty()) {
       throw new ValidationException(ValidationException.Kind.UNPROCESSABLE, errors);
+    }
+  }
+
+  /**
+   * Finite capacity region rules (spec section 5.3). The v1 restrictions (no partial joins, no
+   * closed classes routed in, no finite-capacity queue members) are not arbitrary taste: each guards
+   * a case where JMT's occupancy count could go wrong, so the region would stop bounding the work
+   * inside it, or deadlock. They are listed in the spec with the reason for each.
+   */
+  private static void checkRegions(List<String> errors, NetworkModel model, Set<String> nodeNames) {
+    if (model.regions() == null) {
+      return;
+    }
+    Map<String, Node> nodeByName = new HashMap<>();
+    for (Node n : model.nodes()) {
+      nodeByName.put(n.name(), n);
+    }
+    Set<String> classNames = model.classes().stream().map(JobClass::name).collect(Collectors.toSet());
+    Set<String> regionNames = new java.util.HashSet<>();
+    Map<String, String> memberOf = new HashMap<>();
+
+    for (Region r : model.regions()) {
+      String rn = r.name();
+      checkName(errors, "region name", rn);
+      String label = "region '" + rn + "'";
+      if (rn != null) {
+        if (!regionNames.add(rn)) {
+          errors.add("region name '" + rn + "' is used by more than one region");
+        }
+        if (nodeNames.contains(rn)) {
+          errors.add(label + ": its name collides with node '" + rn
+              + "' (measure rows share the station field)");
+        }
+        // JMT creates a node called <name>_inputStation for the region's entry queue.
+        if (nodeNames.contains(rn + "_inputStation")) {
+          errors.add(label + ": node '" + rn + "_inputStation' collides with the entry station JMT "
+              + "creates for the region");
+        }
+      }
+
+      if (r.nodes() == null || r.nodes().isEmpty()) {
+        errors.add(label + ": nodes must be a non-empty list");
+      } else {
+        for (String member : r.nodes()) {
+          Node n = nodeByName.get(member);
+          if (n == null) {
+            errors.add(label + ": node '" + member + "' does not exist");
+            continue;
+          }
+          if (!(n instanceof QueueNode || n instanceof DelayNode || n instanceof ForkJoinNode)) {
+            errors.add(label + ": node '" + member + "' is a " + n.type()
+                + "; members must be a queue, delay or fork-join");
+          }
+          String other = memberOf.putIfAbsent(member, String.valueOf(rn));
+          if (other != null) {
+            errors.add("node '" + member + "' is in more than one region ('" + other + "' and '"
+                + rn + "')");
+          }
+          // A partial join lets the merged parent leave, and so decrement the occupancy, while
+          // sibling tasks still hold branch servers inside the region.
+          if (n instanceof ForkJoinNode f && !"all".equals(f.join())) {
+            errors.add(label + ": fork-join '" + member + "' must use join \"all\" inside a region");
+          }
+          // Unverified whether a job dropped inside a region decrements its occupancy; if not,
+          // the region fills with ghosts and deadlocks.
+          if (n instanceof QueueNode q && q.capacity() != null) {
+            errors.add(label + ": queue '" + member + "' has a finite capacity, which a region "
+                + "member may not have");
+          }
+        }
+      }
+
+      if (r.capacity() == null || r.capacity() < 1) {
+        errors.add(label + ": capacity must be an integer >= 1");
+      }
+      if (r.classCapacity() != null) {
+        for (Map.Entry<String, Integer> cc : r.classCapacity().entrySet()) {
+          if (!classNames.contains(cc.getKey())) {
+            errors.add(label + ": classCapacity names '" + cc.getKey() + "', which is not a declared class");
+          }
+          Integer v = cc.getValue();
+          if (v == null || v < 1 || (r.capacity() != null && v > r.capacity())) {
+            errors.add(label + ": classCapacity['" + cc.getKey() + "'] must be between 1 and capacity");
+          }
+        }
+      }
+      Object wf = r.whenFull();
+      if (wf instanceof String s) {
+        checkWhenFullValue(errors, label, null, s);
+      } else if (wf instanceof Map<?, ?> m) {
+        for (Map.Entry<?, ?> en : m.entrySet()) {
+          String clazz = String.valueOf(en.getKey());
+          if (!classNames.contains(clazz)) {
+            errors.add(label + ": whenFull names '" + clazz + "', which is not a declared class");
+          }
+          checkWhenFullValue(errors, label, clazz, en.getValue());
+        }
+      } else if (wf != null) {
+        errors.add(label + ": whenFull must be \"wait\", \"drop\" or a map from class to one of them");
+      }
+
+      // A closed population preloaded onto a member bypasses the region entry, so its jobs would
+      // leave without ever being counted in and the occupancy would go negative. Routed in from
+      // outside is probably fine but untested; both are rejected until a golden test lifts this.
+      for (JobClass c : model.classes()) {
+        if (!"closed".equals(c.type())) {
+          continue;
+        }
+        List<RoutingEdge> edges = model.routing() == null ? List.of()
+            : model.routing().getOrDefault(c.name(), List.of());
+        String ref = referenceStationOf(model, c);
+        boolean enters = edges.stream().anyMatch(r::isEntry)
+            || (ref != null && r.nodes() != null && r.nodes().contains(ref));
+        if (enters) {
+          errors.add(label + ": closed class '" + c.name() + "' is routed into the region; a "
+              + "closed class may not enter a region");
+        }
+      }
+    }
+  }
+
+  private static void checkWhenFullValue(List<String> errors, String label, String clazz, Object v) {
+    if (!Region.WAIT.equals(v) && !Region.DROP.equals(v)) {
+      errors.add(label + ": whenFull" + (clazz == null ? "" : "['" + clazz + "']")
+          + " must be \"wait\" or \"drop\", not " + (v == null ? "null" : "'" + v + "'"));
     }
   }
 
