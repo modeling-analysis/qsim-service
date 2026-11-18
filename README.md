@@ -17,6 +17,13 @@ mvn package            # runs the full test suite (requires the JMT engine, head
 The unmodified `JMT-singlejar-1.5.0.jar` is bundled in `lib/` and referenced as a
 system-scoped Maven dependency.
 
+The first build on a machine needs network access, because Maven has to fetch
+`exec-maven-plugin` and `maven-jar-plugin`; `mvn -o` works afterwards. The build runs
+`qsim.build.JmtFcrPatcher` after compilation: it rewrites `simEngine.Simulation` (six
+instructions in `initialize()`, so a finite capacity region may contain fork-joins) and writes the
+patched class into `target/classes`, ahead of the jar on the classpath. The jar in `lib/` itself is
+unmodified, and the build fails if JMT's class has changed.
+
 ## Run
 
 Two options — a container, or a plain Java process. Both start the same server and read

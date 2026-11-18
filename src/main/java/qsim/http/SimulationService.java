@@ -42,6 +42,7 @@ public class SimulationService {
   private final SolutionsParser parser = new SolutionsParser();
 
   public SimulationService(Config config, JmtRunner runner) {
+    qsim.engine.FcrPatchCheck.verify();
     this.config = config;
     this.runner = runner;
   }
