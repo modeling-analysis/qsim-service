@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<sim xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" disableStatisticStop="false" maxEvents="-1" maxSamples="2000000" maxSimulated="-1.0" minSamples="50000" name="mm1" polling="1.0" seed="12345">
+    <userClass name="web" priority="0" referenceSource="src" type="open"/>
+    <node name="src">
+        <section className="RandomSource">
+            <parameter array="true" classPath="jmt.engine.NetStrategies.ServiceStrategy" name="ServiceStrategy">
+                <refClass>web</refClass>
+                <subParameter classPath="jmt.engine.NetStrategies.ServiceStrategies.ServiceTimeStrategy" name="ServiceTimeStrategy">
+                    <subParameter classPath="jmt.engine.random.Exponential" name="Exponential"/>
+                    <subParameter classPath="jmt.engine.random.ExponentialPar" name="distrPar">
+                        <subParameter classPath="java.lang.Double" name="lambda">
+                            <value>1.0</value>
+                        </subParameter>
+                    </subParameter>
+                </subParameter>
+            </parameter>
+        </section>
+        <section className="ServiceTunnel"/>
+        <section className="Router">
+            <parameter array="true" classPath="jmt.engine.NetStrategies.RoutingStrategy" name="RoutingStrategy">
+                <refClass>web</refClass>
+                <subParameter classPath="jmt.engine.NetStrategies.RoutingStrategies.RandomStrategy" name="Random"/>
+            </parameter>
+        </section>
+    </node>
+    <node name="q">
+        <section className="Queue">
+            <parameter classPath="java.lang.Integer" name="size">
+                <value>-1</value>
+            </parameter>
+            <parameter array="true" classPath="java.lang.String" name="dropStrategies">
+                <refClass>web</refClass>
+                <subParameter classPath="java.lang.String" name="dropStrategy">
+                    <value>waiting queue</value>
+                </subParameter>
+            </parameter>
+            <parameter classPath="jmt.engine.NetStrategies.QueueGetStrategies.FCFSstrategy" name="FCFSstrategy"/>
+            <parameter array="true" classPath="jmt.engine.NetStrategies.QueuePutStrategy" name="QueuePutStrategy">
+                <refClass>web</refClass>
+                <subParameter classPath="jmt.engine.NetStrategies.QueuePutStrategies.TailStrategy" name="TailStrategy"/>
+            </parameter>
+        </section>
+        <section className="Server">
+            <parameter classPath="java.lang.Integer" name="maxJobs">
+                <value>1</value>
+            </parameter>
+            <parameter array="true" classPath="java.lang.Integer" name="numberOfVisits">
+                <refClass>web</refClass>
+                <subParameter classPath="java.lang.Integer" name="numberOfVisits">
+                    <value>1</value>
+                </subParameter>
+            </parameter>
+            <parameter array="true" classPath="jmt.engine.NetStrategies.ServiceStrategy" name="ServiceStrategy">
+                <refClass>web</refClass>
+                <subParameter classPath="jmt.engine.NetStrategies.ServiceStrategies.ServiceTimeStrategy" name="ServiceTimeStrategy">
+                    <subParameter classPath="jmt.engine.random.Exponential" name="Exponential"/>
+                    <subParameter classPath="jmt.engine.random.ExponentialPar" name="distrPar">
+                        <subParameter classPath="java.lang.Double" name="lambda">
+                            <value>2.0</value>
+                        </subParameter>
+                    </subParameter>
+                </subParameter>
+            </parameter>
+        </section>
+        <section className="Router">
+            <parameter array="true" classPath="jmt.engine.NetStrategies.RoutingStrategy" name="RoutingStrategy">
+                <refClass>web</refClass>
+                <subParameter classPath="jmt.engine.NetStrategies.RoutingStrategies.RandomStrategy" name="Random"/>
+            </parameter>
+        </section>
+    </node>
+    <node name="snk">
+        <section className="JobSink"/>
+    </node>
+    <measure alpha="0.05" name="q_web_utilization" nodeType="station" precision="0.03" referenceNode="q" referenceUserClass="web" type="Utilization" verbose="false"/>
+    <measure alpha="0.05" name="q_web_throughput" nodeType="station" precision="0.03" referenceNode="q" referenceUserClass="web" type="Throughput" verbose="false"/>
+    <measure alpha="0.05" name="q_web_response-time" nodeType="station" precision="0.03" referenceNode="q" referenceUserClass="web" type="Response Time" verbose="false"/>
+    <connection source="src" target="q"/>
+    <connection source="q" target="snk"/>
+</sim>
