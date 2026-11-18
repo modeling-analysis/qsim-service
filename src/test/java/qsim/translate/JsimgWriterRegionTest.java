@@ -176,4 +176,12 @@ class JsimgWriterRegionTest {
       assertEquals(expected, xml, n + " must render byte-identically to main");
     }
   }
+
+  @Test
+  void regionMeasureKeepsRegionAsReferenceNode() throws Exception {
+    Document d = writer.toDocument(model(false, region(null, null)), stopping(), 42L,
+        List.of(new MeasureSpec("region_R_a_region-queue-time", "Queue Time", "R", "a", "region")));
+    assertEquals("R", xp.evaluate("/sim/measure[@name='region_R_a_region-queue-time']/@referenceNode", d));
+    assertEquals("region", xp.evaluate("/sim/measure[@name='region_R_a_region-queue-time']/@nodeType", d));
+  }
 }

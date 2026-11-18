@@ -46,6 +46,23 @@ public class MeasureMapper {
   }
 
   /**
+   * Finite-capacity-region measures: domain type -> JMT measure string. Anchored on the region name
+   * with {@code nodeType="region"}. Semantics (spec section 3): Response Time is the total (entry wait
+   * plus time inside), Queue Time the entry wait only, Number of Customers those waiting plus inside,
+   * Throughput the admitted throughput, Drop Rate the losses per unit time (drop mode). JMT's
+   * Utilization and Residence Time on a region are meaningless or redundant and are not exposed.
+   */
+  static final Map<String, String> REGION = new LinkedHashMap<>();
+
+  static {
+    REGION.put("region-response-time", "Response Time");
+    REGION.put("region-queue-time", "Queue Time");
+    REGION.put("region-queue-length", "Number of Customers");
+    REGION.put("region-throughput", "Throughput");
+    REGION.put("region-drop-rate", "Drop Rate");
+  }
+
+  /**
    * Fork-join nodes: domain type -> JMT's dedicated fork-region measure string, overriding
    * {@link #STATION}. A station-level {@code "Response Time"} taken anywhere inside the writer's
    * fork/branch/join expansion measures a single station's residence time — at the join station
@@ -122,6 +139,7 @@ public class MeasureMapper {
     var all = new java.util.HashSet<String>();
     all.addAll(STATION.keySet());
     all.addAll(SYSTEM.keySet());
+    all.addAll(REGION.keySet());
     // A fork-join-only domain type (one with no plain-station equivalent in STATION) would
     // otherwise be rejected by map() as unsupported. No-op while every FORK_JOIN_STATION key is
     // also a STATION key; here so the next fork-join measure type does not trip over it.
@@ -137,9 +155,25 @@ public class MeasureMapper {
             List.of("unsupported measure type: '" + t + "'; supported: " + SUPPORTED));
       }
     }
+    boolean hasRegions = model.regions() != null && !model.regions().isEmpty();
+    for (String t : types) {
+      if (REGION.containsKey(t) && !hasRegions) {
+        throw new ValidationException(ValidationException.Kind.BAD_REQUEST,
+            List.of("measure type '" + t + "' requires the model to define regions"));
+      }
+    }
     List<MeasureSpec> specs = new ArrayList<>();
     for (String t : types) {
-      if (STATION.containsKey(t)) {
+      if (REGION.containsKey(t)) {
+        for (Region r : model.regions()) {
+          for (JobClass c : model.classes()) {
+            if (entersRegion(model, r, c.name())) {
+              specs.add(new MeasureSpec("region_" + r.name() + "_" + c.name() + "_" + t,
+                  REGION.get(t), r.name(), c.name(), "region"));
+            }
+          }
+        }
+      } else if (STATION.containsKey(t)) {
         String jmt = STATION.get(t);
         for (Node n : model.nodes()) {
           String jmtForNode = n instanceof ForkJoinNode ? FORK_JOIN_STATION.getOrDefault(t, jmt) : jmt;
@@ -205,6 +239,12 @@ public class MeasureMapper {
           s.nodeType(), !RATE_TYPED.contains(s.jmtType())));
     }
     return out;
+  }
+
+  /** True iff the class has a routing edge entering the region (see {@link Region#isEntry}). */
+  private static boolean entersRegion(NetworkModel model, Region r, String clazz) {
+    List<RoutingEdge> edges = model.routing() == null ? null : model.routing().get(clazz);
+    return edges != null && edges.stream().anyMatch(r::isEntry);
   }
 
   /** Classes with service defined at this node (queue/delay/fork-join). Sources/sinks yield none. */
