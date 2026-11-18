@@ -217,4 +217,44 @@ class ContractValidatorTest {
     assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[b]") && s.contains("'src'")),
         ex.details().toString());
   }
+
+  @Test
+  void rejectsAClosedClassWhoseDefaultReferenceStationHasNoExit() {
+    // No explicit referenceStation, so the writer preloads the population onto the class's delay
+    // node "think". The class has no edge out of think, so its jobs start there and are stuck,
+    // or leak onto another class's edges. The validator must resolve the same default the writer uses.
+    NetworkModel m = new NetworkModel("closed-dead-end",
+        List.of(new JobClass("batch", "closed", 3, null)),
+        List.of(
+            new DelayNode("think", "delay", Map.of("batch", new ServiceSpec(exp(0.2)))),
+            new QueueNode("q", "queue", 1, "fcfs", null, Map.of("batch", new ServiceSpec(exp(3.0))))),
+        Map.of("batch", List.of(new RoutingEdge("q", "q", null))));
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(m)));
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[batch]") && s.contains("'think'")),
+        ex.details().toString());
+  }
+
+  @Test
+  void acceptsAClosedClassWhoseDefaultReferenceStationHasAnExit() {
+    NetworkModel m = new NetworkModel("closed-ok",
+        List.of(new JobClass("batch", "closed", 3, null)),
+        List.of(
+            new DelayNode("think", "delay", Map.of("batch", new ServiceSpec(exp(0.2)))),
+            new QueueNode("q", "queue", 1, "fcfs", null, Map.of("batch", new ServiceSpec(exp(3.0))))),
+        Map.of("batch", List.of(new RoutingEdge("think", "q", null), new RoutingEdge("q", "think", null))));
+    assertDoesNotThrow(() -> validator.validate(req(m)));
+  }
+
+  @Test
+  void rejectsARoutingKeyThatIsNotADeclaredClass() {
+    // The writer emits a physical connection for every routing entry, so an undeclared key such as a
+    // typo adds connections that the real classes' RandomStrategy routers would then spread over.
+    NetworkModel valid = twoClass(List.of(new RoutingEdge("src", "qb", null), new RoutingEdge("qb", "snk", null)));
+    Map<String, List<RoutingEdge>> routing = new java.util.HashMap<>(valid.routing());
+    routing.put("aa", List.of(new RoutingEdge("src", "qb", null)));
+    NetworkModel m = new NetworkModel(valid.name(), valid.classes(), valid.nodes(), routing);
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(m)));
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[aa]") && s.contains("not a declared class")),
+        ex.details().toString());
+  }
 }

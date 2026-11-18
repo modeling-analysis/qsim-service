@@ -25,6 +25,7 @@ import javax.xml.validation.SchemaFactory;
 import javax.xml.validation.Validator;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
+import qsim.contract.ContractValidator;
 import qsim.contract.ValidationException;
 import qsim.distribution.CanonicalDistribution;
 import qsim.distribution.DistParam;
@@ -130,27 +131,25 @@ public class JsimgWriter {
    * reads {@code referenceSource} for both open and closed classes).
    */
   protected void writeClosedUserClass(Element sim, NetworkModel model, JobClass c) {
-    String ref = c.referenceStation() != null ? c.referenceStation() : defaultReference(model, c.name());
+    String ref = referenceStation(model, c);
     Xml.child(sim, "userClass",
         "name", c.name(), "type", "closed", "priority", "0",
         "customers", c.population().toString(),
         "referenceSource", ref);
   }
 
-  /** Section 5.3: default to the class's delay node if present, else its first routed station. */
-  private String defaultReference(NetworkModel model, String className) {
-    for (Node n : model.nodes()) {
-      if (n instanceof DelayNode d && d.service().containsKey(className)) {
-        return d.name();
-      }
+  /**
+   * The station a closed class's population is preloaded onto. The default rule lives in
+   * {@link ContractValidator#referenceStationOf} so that validation checks the very node the
+   * writer preloads.
+   */
+  private String referenceStation(NetworkModel model, JobClass c) {
+    String ref = ContractValidator.referenceStationOf(model, c);
+    if (ref == null) {
+      throw new ValidationException(ValidationException.Kind.UNPROCESSABLE,
+          List.of("cannot determine referenceStation for closed class '" + c.name() + "'"));
     }
-    List<RoutingEdge> edges = model.routing() == null ? List.of()
-        : model.routing().getOrDefault(className, List.of());
-    if (!edges.isEmpty()) {
-      return edges.get(0).from();
-    }
-    throw new ValidationException(ValidationException.Kind.UNPROCESSABLE,
-        List.of("cannot determine referenceStation for closed class '" + className + "'"));
+    return ref;
   }
 
   /**
@@ -163,7 +162,7 @@ public class JsimgWriter {
     var byStation = new java.util.LinkedHashMap<String, java.util.List<JobClass>>();
     for (JobClass c : model.classes()) {
       if ("closed".equals(c.type())) {
-        String ref = c.referenceStation() != null ? c.referenceStation() : defaultReference(model, c.name());
+        String ref = referenceStation(model, c);
         byStation.computeIfAbsent(ref, k -> new java.util.ArrayList<>()).add(c);
       }
     }
@@ -549,14 +548,21 @@ public class JsimgWriter {
 
   /**
    * The targets of the {@code <connection>}s that {@link #writeConnections} emits out of the node
-   * whose domain routing key is {@code routingKey}: the union of every class's out-edges there.
+   * whose domain routing key is {@code routingKey}: the union of every routing entry's out-edges there.
    * Empty for writer-internal stations (fork branches), whose links are not domain edges.
    */
   private static Set<String> connectionTargets(NetworkModel model, String routingKey) {
+    // Every routing entry, not only the declared classes: writeConnections emits a connection for
+    // each of them, and RandomStrategy spreads over whatever connections exist. ContractValidator
+    // rejects undeclared keys; this keeps the writer consistent with itself regardless.
     Set<String> targets = new java.util.HashSet<>();
-    for (JobClass c : model.classes()) {
-      for (RoutingEdge e : outEdges(model, c.name(), routingKey)) {
-        targets.add(e.to());
+    if (model.routing() != null) {
+      for (List<RoutingEdge> edges : model.routing().values()) {
+        for (RoutingEdge e : edges) {
+          if (e.from().equals(routingKey)) {
+            targets.add(e.to());
+          }
+        }
       }
     }
     return targets;

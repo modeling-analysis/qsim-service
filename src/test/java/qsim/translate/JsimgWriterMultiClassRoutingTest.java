@@ -104,4 +104,27 @@ class JsimgWriterMultiClassRoutingTest {
           strategy(doc, n, "web", "/@classPath"), n);
     }
   }
+
+  @Test
+  void connectionsFromUndeclaredRoutingKeysStillForceATable() throws Exception {
+    // writeConnections emits an edge for every routing entry, declared class or not. If the router
+    // only looked at declared classes, class a's lone edge src -> qa would look like src's only
+    // connection and keep RandomStrategy, which would then split a across qa and qb.
+    // ContractValidator rejects such a key; the writer must still not route on a different
+    // connection set than the one it writes.
+    NetworkModel m = new NetworkModel("undeclared",
+        List.of(new JobClass("a", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("a", new ArrivalSpec(exp(1.0)))),
+                new QueueNode("qa", "queue", 1, "fcfs", null, Map.of("a", new ServiceSpec(exp(2.0)))),
+                new QueueNode("qb", "queue", 1, "fcfs", null, Map.of("a", new ServiceSpec(exp(2.0)))),
+                new SinkNode("snk", "sink")),
+        Map.of("a", List.of(new RoutingEdge("src", "qa", null), new RoutingEdge("qa", "snk", null)),
+               "typo", List.of(new RoutingEdge("src", "qb", null), new RoutingEdge("qb", "snk", null))));
+    Document doc = writer.toDocument(m, stopping(), 42L, List.of());
+    assertEquals("2", xp.evaluate("count(/sim/connection[@source='src'])", doc));
+    assertEquals("jmt.engine.NetStrategies.RoutingStrategies.EmpiricalStrategy",
+        strategy(doc, "src", "a", "/@classPath"));
+    assertEquals("qa", strategy(doc, "src", "a",
+        "/subParameter/subParameter/subParameter[@name='stationName']/value"));
+  }
 }
