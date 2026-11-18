@@ -39,7 +39,7 @@ import org.objectweb.asm.Opcodes;
  * are identical, so the original stack-map frames stay valid and the class is written without
  * recomputing them.
  *
- * <p>This is deliberately brittle: the class hash and the rewrite count must both match, so a JMT
+ * <p>This is deliberately brittle: the jar hash, the class hash and the per-kind rewrite counts must all match, so a JMT
  * upgrade fails the build loudly instead of producing a silently different engine. It uses only
  * ASM and bytes, never JMT classes, and is excluded from the shipped jar.
  */
@@ -49,6 +49,10 @@ public final class JmtFcrPatcher {
   public static final String EXPECTED_SHA256 =
       "c8ff675c8c5b8ce05afbd011e70343b8effc96d9adea0d9374caef2b07c80343";
 
+  /** SHA-256 of the whole bundled {@code lib/JMT-singlejar-1.5.0.jar}. */
+  public static final String EXPECTED_JAR_SHA256 =
+      "4135177ee35663f0d7a2d8a021e390c587223c0987b728c91b5e66cd79d82e3d";
+
   static final String CLASS_ENTRY = "simEngine/Simulation.class";
   static final String MARKER_FIELD = "QSIM_FCR_PATCHED";
   private static final String SPEC = "docs/superpowers/specs/2026-11-18-finite-capacity-regions-design.md";
@@ -56,10 +60,15 @@ public final class JmtFcrPatcher {
   private static final String STORAGE = "NodeSections/Storage";
   private static final String LINKAGE = "NodeSections/Linkage";
   private static final String REGION = "QueueNet/BlockingRegion";
-  private static final int EXPECTED_REWRITES = 6;
+  /** Per kind: one Storage and one Linkage each. */
+  private static final int EXPECTED_PER_KIND = 2;
 
-  /** The rewritten class and how many instructions were rewritten. */
-  public record Result(byte[] bytes, int rewrites) {}
+  /** The rewritten class and how many instructions of each kind were rewritten. */
+  public record Result(byte[] bytes, int instanceOfs, int checkcastDrops, int invokes) {
+    public int rewrites() {
+      return instanceOfs + checkcastDrops + invokes;
+    }
+  }
 
   private JmtFcrPatcher() {}
 
@@ -68,7 +77,7 @@ public final class JmtFcrPatcher {
     ClassReader reader = new ClassReader(classBytes);
     // Flags 0: keep the original frames. Nothing here changes the stack at a merge point.
     ClassWriter writer = new ClassWriter(reader, 0);
-    int[] count = {0};
+    int[] count = {0, 0, 0}; // instanceof, checkcast drops, invokevirtual
     reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
       @Override
       public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
@@ -86,7 +95,7 @@ public final class JmtFcrPatcher {
               super.visitMethodInsn(Opcodes.INVOKESTATIC, SHIM,
                   storage ? "storageOrJoin" : "linkageOrFork", "(Ljava/lang/Object;)Z", false);
             } else if (opcode == Opcodes.CHECKCAST && (storage || linkage)) {
-              count[0]++; // dropped: the shim takes Object
+              count[1]++; // dropped: the shim takes Object
             } else {
               super.visitTypeInsn(opcode, type);
             }
@@ -95,12 +104,12 @@ public final class JmtFcrPatcher {
           @Override
           public void visitMethodInsn(int opcode, String owner, String name, String desc, boolean itf) {
             if (opcode == Opcodes.INVOKEVIRTUAL && owner.equals(STORAGE) && name.equals("redirectionTurnON")) {
-              count[0]++;
+              count[2]++;
               super.visitMethodInsn(Opcodes.INVOKESTATIC, SHIM, "redirect",
                   "(Ljava/lang/Object;L" + REGION + ";)V", false);
             } else if (opcode == Opcodes.INVOKEVIRTUAL && owner.equals(LINKAGE)
                 && name.equals("borderRouterTurnON")) {
-              count[0]++;
+              count[2]++;
               super.visitMethodInsn(Opcodes.INVOKESTATIC, SHIM, "border",
                   "(Ljava/lang/Object;L" + REGION + ";)V", false);
             } else {
@@ -118,10 +127,10 @@ public final class JmtFcrPatcher {
         super.visitEnd();
       }
     }, 0);
-    return new Result(writer.toByteArray(), count[0]);
+    return new Result(writer.toByteArray(), count[0], count[1], count[2]);
   }
 
-  /** Checks the class hash, rewrites, and requires exactly six rewrites. */
+  /** Checks the class hash, rewrites, and requires exactly two rewrites of each kind. */
   public static byte[] patch(byte[] classBytes) {
     String actual = sha256(classBytes);
     if (!EXPECTED_SHA256.equals(actual)) {
@@ -129,11 +138,27 @@ public final class JmtFcrPatcher {
           + EXPECTED_SHA256 + ": the bundled JMT changed. Re-verify the patch against " + SPEC);
     }
     Result r = rewrite(classBytes);
-    if (r.rewrites() != EXPECTED_REWRITES) {
-      throw new IllegalStateException("Made " + r.rewrites() + " rewrites in simEngine.Simulation.initialize(),"
-          + " expected " + EXPECTED_REWRITES + ". See " + SPEC);
-    }
+    requireCounts(r);
     return r.bytes();
+  }
+
+  /** Fails unless each rewrite kind happened exactly twice (once for Storage, once for Linkage). */
+  static void requireCounts(Result r) {
+    if (r.instanceOfs() != EXPECTED_PER_KIND || r.checkcastDrops() != EXPECTED_PER_KIND
+        || r.invokes() != EXPECTED_PER_KIND) {
+      throw new IllegalStateException("Rewrites in simEngine.Simulation.initialize() were "
+          + r.instanceOfs() + " instanceof, " + r.checkcastDrops() + " checkcast drops, "
+          + r.invokes() + " invokevirtual; expected " + EXPECTED_PER_KIND + " of each. See " + SPEC);
+    }
+  }
+
+  /** Fails unless the file is exactly the bundled JMT 1.5.0 jar. */
+  static void verifyJar(Path jar) throws IOException {
+    String actual = sha256(Files.readAllBytes(jar));
+    if (!EXPECTED_JAR_SHA256.equals(actual)) {
+      throw new IllegalStateException(jar + " SHA-256 is " + actual + ", expected "
+          + EXPECTED_JAR_SHA256 + ": the bundled JMT jar changed. Re-verify the patch against " + SPEC);
+    }
   }
 
   private static String sha256(byte[] bytes) {
@@ -149,6 +174,7 @@ public final class JmtFcrPatcher {
     if (args.length != 2) {
       throw new IllegalArgumentException("usage: JmtFcrPatcher <jmt-jar> <output-dir>");
     }
+    verifyJar(Path.of(args[0]));
     byte[] original;
     try (ZipFile zip = new ZipFile(args[0]); InputStream in = zip.getInputStream(zip.getEntry(CLASS_ENTRY))) {
       original = in.readAllBytes();

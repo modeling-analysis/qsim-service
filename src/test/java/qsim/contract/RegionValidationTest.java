@@ -218,4 +218,12 @@ class RegionValidationTest {
   void acceptsClosedClassThatNeverEntersARegion() {
     accepts(withClosedClass(List.of(valid()), false));
   }
+
+  @Test
+  void regionNameMayNotCollideWithAGeneratedForkJoinStation() {
+    for (String name : List.of("fj__b0", "fj__b1", "fj__join")) {
+      rejects(model(List.of(region(name, List.of("q1", "fj", "q2"), 1))), "generated");
+    }
+    accepts(model(List.of(region("fj__b2", List.of("q1", "fj", "q2"), 1))));
+  }
 }

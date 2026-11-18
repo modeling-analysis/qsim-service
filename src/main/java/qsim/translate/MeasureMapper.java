@@ -178,6 +178,13 @@ public class MeasureMapper {
         for (Node n : model.nodes()) {
           String jmtForNode = n instanceof ForkJoinNode ? FORK_JOIN_STATION.getOrDefault(t, jmt) : jmt;
           for (String clazz : servedClasses(n)) {
+            // JMT redirects a job entering a region to <region>_inputStation and it arrives at the
+            // member a second time on admission, so "Arrival Rate" counts each outside arrival twice
+            // there (measured 0.998 against a true 2.0). Omit the row rather than report it wrong;
+            // interior members see each arrival once and are unaffected.
+            if (t.equals("interarrival-time") && isRegionEntry(model, n.name(), clazz)) {
+              continue;
+            }
             specs.add(new MeasureSpec(n.name() + "_" + clazz + "_" + t, jmtForNode,
                 n.name(), clazz, "station", REQUIRES_VERBOSE.contains(t)));
           }
@@ -245,6 +252,25 @@ public class MeasureMapper {
   private static boolean entersRegion(NetworkModel model, Region r, String clazz) {
     List<RoutingEdge> edges = model.routing() == null ? null : model.routing().get(clazz);
     return edges != null && edges.stream().anyMatch(r::isEntry);
+  }
+
+  /** True iff some region has an entering edge of this class whose target is the node. */
+  private static boolean isRegionEntry(NetworkModel model, String node, String clazz) {
+    if (!hasRegionsIn(model) || model.routing() == null || model.routing().get(clazz) == null) {
+      return false;
+    }
+    for (Region r : model.regions()) {
+      for (RoutingEdge e : model.routing().get(clazz)) {
+        if (r.isEntry(e) && e.to().equals(node)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private static boolean hasRegionsIn(NetworkModel model) {
+    return model.regions() != null && !model.regions().isEmpty();
   }
 
   /** Classes with service defined at this node (queue/delay/fork-join). Sources/sinks yield none. */

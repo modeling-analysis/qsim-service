@@ -165,6 +165,17 @@ public class ContractValidator {
     }
     Set<String> classNames = model.classes().stream().map(JobClass::name).collect(Collectors.toSet());
     Set<String> regionNames = new java.util.HashSet<>();
+    // Stations JsimgWriter generates for each fork-join (<fj>__b<i> and <fj>__join; mirrors
+    // JsimgWriter.branchStationName/joinStationName, which are package-private to qsim.translate).
+    Set<String> generatedNames = new java.util.HashSet<>();
+    for (Node n : model.nodes()) {
+      if (n instanceof ForkJoinNode fj) {
+        for (int i = 0; i < fj.branches().size(); i++) {
+          generatedNames.add(fj.name() + "__b" + i);
+        }
+        generatedNames.add(fj.name() + "__join");
+      }
+    }
     Map<String, String> memberOf = new HashMap<>();
 
     for (Region r : model.regions()) {
@@ -178,6 +189,10 @@ public class ContractValidator {
         if (nodeNames.contains(rn)) {
           errors.add(label + ": its name collides with node '" + rn
               + "' (measure rows share the station field)");
+        }
+        if (generatedNames.contains(rn)) {
+          errors.add(label + ": its name collides with the station '" + rn
+              + "' generated for a fork-join (measure rows share the station field)");
         }
         // JMT creates a node called <name>_inputStation for the region's entry queue.
         if (nodeNames.contains(rn + "_inputStation")) {

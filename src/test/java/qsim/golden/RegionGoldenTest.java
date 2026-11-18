@@ -121,7 +121,36 @@ class RegionGoldenTest {
     SimulationResponse without = run(fjModel(0.4, null), 1001L, ms);
     MeasureResult a = pick(with, null, "web", "system-response-time");
     MeasureResult b = pick(without, null, "web", "system-response-time");
+    assertTrue(Double.isFinite(a.mean()) && Double.isFinite(b.mean()));
     assertEquals(b.mean(), a.mean(), 0.0);
+  }
+
+  /**
+   * An interior member's interarrival time is untouched by a region, and an entry member's row is
+   * omitted (JMT counts each arrival there twice: once at the Queue, once after admission).
+   */
+  @Test
+  void interarrivalTimeOmittedAtEntryAndUnchangedInside() {
+    Map<String, ServiceSpec> s1 = svc("web", 1.0);
+    java.util.function.Function<List<Region>, NetworkModel> build = regions -> new NetworkModel("chain",
+        List.of(new JobClass("web", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("web", new ArrivalSpec(exp(0.5)))),
+                new QueueNode("q1", "queue", 1, "fcfs", null, s1),
+                new QueueNode("q2", "queue", 1, "fcfs", null, s1),
+                new SinkNode("snk", "sink")),
+        Map.of("web", List.of(new RoutingEdge("src", "q1", null), new RoutingEdge("q1", "q2", null),
+            new RoutingEdge("q2", "snk", null))),
+        regions);
+    List<String> ms = List.of("interarrival-time");
+    SimulationResponse with = run(build.apply(List.of(new Region("R", List.of("q1", "q2"), 1000, null, null))),
+        1001L, ms);
+    SimulationResponse without = run(build.apply(null), 1001L, ms);
+    assertTrue(with.measures().stream().noneMatch(m -> "q1".equals(m.station())),
+        "no interarrival-time row at the region entry");
+    double a = pick(with, "q2", "web", "interarrival-time").mean();
+    double b = pick(without, "q2", "web", "interarrival-time").mean();
+    assertTrue(Double.isFinite(a) && Double.isFinite(b));
+    assertEquals(b, a, 0.0);
   }
 
   /**

@@ -16,6 +16,12 @@ package qsim.engine;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.File;
+import java.net.URL;
+import java.net.URLClassLoader;
 import org.junit.jupiter.api.Test;
 
 class FcrPatchCheckTest {
@@ -23,6 +29,17 @@ class FcrPatchCheckTest {
   /** Proves target/classes precedes the JMT jar on the surefire classpath. */
   @Test
   void theTestClasspathRunsThePatchedEngine() {
-    assertDoesNotThrow(FcrPatchCheck::verify);
+    assertDoesNotThrow(() -> FcrPatchCheck.verify());
+  }
+
+  /** The stock class, loaded from the JMT jar alone, must be rejected (spec section 8). */
+  @Test
+  void rejectsTheUnpatchedStockClass() throws Exception {
+    URL jar = new File("lib/JMT-singlejar-1.5.0.jar").toURI().toURL();
+    try (URLClassLoader loader = new URLClassLoader(new URL[] {jar}, ClassLoader.getPlatformClassLoader())) {
+      Class<?> stock = loader.loadClass("simEngine.Simulation");
+      IllegalStateException e = assertThrows(IllegalStateException.class, () -> FcrPatchCheck.verify(stock));
+      assertTrue(e.getMessage().contains("unpatched"), e.getMessage());
+    }
   }
 }

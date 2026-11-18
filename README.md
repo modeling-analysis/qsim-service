@@ -239,7 +239,8 @@ are unchanged: `response-time` on a member does not include the region's entry w
 
 **v1 limits:** no closed class may be routed into a region (by an entering edge, or by having its
 reference station inside); members' `capacity` must be unset; a fork-join member must use
-`join: "all"` (or omit `join`).
+`join: "all"` (or omit `join`); `interarrival-time` is not reported at a node where a class enters a
+region (JMT counts each arrival there twice); interior members are unaffected.
 
 **Known limitation:** a JMT failure *during* a simulation run (not at load or setup) leaks one idle
 JMT watchdog thread per failure. This is a JMT 1.5.0 issue; see the comment in `JmtRunner.java`.
@@ -260,6 +261,6 @@ workflow above (each point averaged over independent seeds). See
 | Status | Meaning |
 |--------|---------|
 | 400 | Malformed JSON, or unsupported measure type, including a `region-*` measure on a model without regions |
-| 422 | Semantic model error (dangling routing, open class without a source, probabilities not summing to 1, a class that reaches a non-sink node with no edge out of it, a routing key that is not a declared class, a closed class whose referenceStation does not exist, or an invalid region: empty or non-queue/delay/fork-join members, a node in two regions, a duplicate or colliding region name, `capacity` < 1, a bad `classCapacity` or `whenFull`, a fork-join member with a partial `join`, a member queue with `capacity`, a closed class routed into a region) or JSIMG schema failure |
+| 422 | Semantic model error (dangling routing, open class without a source, probabilities not summing to 1, a class that reaches a non-sink node with no edge out of it, a routing key that is not a declared class, a closed class whose referenceStation does not exist, or an invalid region: empty or non-queue/delay/fork-join members, a member node that does not exist, a node in two regions, a duplicate or colliding region name, `capacity` < 1, a bad `classCapacity` or `whenFull`, a fork-join member with a partial `join`, a member queue with `capacity`, a closed class routed into a region) or JSIMG schema failure |
 | 500 | Simulation engine failure |
 | 200 + `completed:false` | Watchdog fired before convergence — partial measures |

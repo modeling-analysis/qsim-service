@@ -30,6 +30,11 @@ public final class FcrPatchCheck {
     } catch (ClassNotFoundException e) {
       throw new IllegalStateException("JMT engine not found on the classpath", e);
     }
+    verify(sim);
+  }
+
+  /** Fails unless the given {@code simEngine.Simulation} class carries the patch marker. */
+  static void verify(Class<?> sim) {
     try {
       sim.getField("QSIM_FCR_PATCHED");
     } catch (NoSuchFieldException e) {

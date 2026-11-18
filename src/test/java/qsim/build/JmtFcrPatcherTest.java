@@ -47,6 +47,30 @@ class JmtFcrPatcherTest {
   }
 
   @Test
+  void eachRewriteKindHappensTwice() throws Exception {
+    JmtFcrPatcher.Result r = JmtFcrPatcher.rewrite(fromJar(JmtFcrPatcher.CLASS_ENTRY));
+    assertEquals(2, r.instanceOfs());
+    assertEquals(2, r.checkcastDrops());
+    assertEquals(2, r.invokes());
+  }
+
+  @Test
+  void aWrongCountForAnyOneKindFailsEvenWhenTheTotalIsSix() {
+    var e = assertThrows(IllegalStateException.class,
+        () -> JmtFcrPatcher.requireCounts(new JmtFcrPatcher.Result(new byte[0], 3, 2, 1)));
+    assertTrue(e.getMessage().contains("2026-11-18-finite-capacity-regions-design.md"), e.getMessage());
+    assertDoesNotThrow(() -> JmtFcrPatcher.requireCounts(new JmtFcrPatcher.Result(new byte[0], 2, 2, 2)));
+  }
+
+  @Test
+  void pinsTheWholeJar() throws Exception {
+    assertDoesNotThrow(() -> JmtFcrPatcher.verifyJar(java.nio.file.Path.of(JAR)));
+    IllegalStateException e = assertThrows(IllegalStateException.class,
+        () -> JmtFcrPatcher.verifyJar(java.nio.file.Path.of("pom.xml")));
+    assertTrue(e.getMessage().contains("2026-11-18-finite-capacity-regions-design.md"), e.getMessage());
+  }
+
+  @Test
   void refusesAClassWithADifferentHash() throws Exception {
     IllegalStateException e = assertThrows(IllegalStateException.class,
         () -> JmtFcrPatcher.patch(fromJar("simEngine/SimLoader.class")));
