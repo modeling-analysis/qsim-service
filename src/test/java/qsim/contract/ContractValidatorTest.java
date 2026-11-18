@@ -174,4 +174,47 @@ class ContractValidatorTest {
       assertDoesNotThrow(() -> validator.validate(req(m)), "must accept node name '" + ok + "'");
     }
   }
+
+  // ---- issue #18: a class must be able to leave every non-sink node it reaches -----------------
+
+  /** Two open classes on disjoint routes out of one source; {@code bRoutes} is class b's routing. */
+  private NetworkModel twoClass(List<RoutingEdge> bRoutes) {
+    Map<String, ServiceSpec> both = Map.of("a", new ServiceSpec(exp(2.0)), "b", new ServiceSpec(exp(2.0)));
+    return new NetworkModel("two",
+        List.of(new JobClass("a", "open", null, null), new JobClass("b", "open", null, null)),
+        List.of(
+            new SourceNode("src", "source", Map.of("a", new ArrivalSpec(exp(1.0)), "b", new ArrivalSpec(exp(1.0)))),
+            new QueueNode("qa", "queue", 1, "fcfs", null, both),
+            new QueueNode("qb", "queue", 1, "fcfs", null, both),
+            new SinkNode("snk", "sink")),
+        Map.of("a", List.of(new RoutingEdge("src", "qa", null), new RoutingEdge("qa", "snk", null)),
+               "b", bRoutes));
+  }
+
+  @Test
+  void acceptsClassesOnDisjointRoutes() {
+    assertDoesNotThrow(() -> validator.validate(req(twoClass(
+        List.of(new RoutingEdge("src", "qb", null), new RoutingEdge("qb", "snk", null))))));
+  }
+
+  @Test
+  void rejectsAClassThatReachesANodeItCannotLeave() {
+    // b enters qb but has no edge out of it. The writer would hand b to whatever edges other
+    // classes declared at qb (none here, but in general a silent cross-class leak).
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(twoClass(
+        List.of(new RoutingEdge("src", "qb", null))))));
+    assertEquals(ValidationException.Kind.UNPROCESSABLE, ex.kind());
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[b]") && s.contains("'qb'")),
+        ex.details().toString());
+  }
+
+  @Test
+  void rejectsAnOpenClassWithNoEdgeOutOfItsSource() {
+    // b arrives at src but has no edge out of it: a RandomStrategy router would send b down a's
+    // edge src -> qa, exactly the class mixing of issue #18.
+    ValidationException ex = assertThrows(ValidationException.class, () -> validator.validate(req(twoClass(
+        List.of()))));
+    assertTrue(ex.details().stream().anyMatch(s -> s.contains("routing[b]") && s.contains("'src'")),
+        ex.details().toString());
+  }
 }

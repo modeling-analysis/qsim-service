@@ -485,6 +485,7 @@ public class JsimgWriter {
     // set membership against the model's actual ForkJoinNodes (not a "__join" string-suffix
     // heuristic), so a user-named node that happens to end in "__join" is never misrouted.
     String routingKey = joinRoutingKey(model, fromNode);
+    Set<String> connected = connectionTargets(model, routingKey);
     Element section = Xml.child(node, "section", "className", "Router");
     Element param = Xml.child(section, "parameter",
         "classPath", "jmt.engine.NetStrategies.RoutingStrategy",
@@ -493,7 +494,18 @@ public class JsimgWriter {
       List<RoutingEdge> edges = outEdges(model, c.name(), routingKey);
       Element refClass = Xml.child(param, "refClass");
       refClass.appendChild(refClass.getOwnerDocument().createTextNode(c.name()));
-      if (edges.size() <= 1) {
+      // RandomStrategy picks uniformly among ALL of this node's connections, and connections are
+      // class-agnostic (the union of every class's edges; see writeConnections). So it is exact
+      // only when this class's single edge is the node's only connection, or when the class has
+      // no domain edges here at all (a branch station's lone link to its join; a node the class
+      // never reaches, which ContractValidator guarantees). Anything else needs a table naming
+      // only this class's destinations, or the class leaks onto other classes' edges (issue #18).
+      // Keeping RandomStrategy where it is exact matters: with one connection it draws no random
+      // number, while EmpiricalStrategy always draws one, so every model that was already right
+      // stays byte-identical and keeps its seeded results.
+      boolean randomIsExact = edges.isEmpty()
+          || (edges.size() == 1 && connected.equals(Set.of(edges.get(0).to())));
+      if (randomIsExact) {
         Xml.child(param, "subParameter",
             "classPath", "jmt.engine.NetStrategies.RoutingStrategies.RandomStrategy",
             "name", "Random");
@@ -508,7 +520,10 @@ public class JsimgWriter {
               "classPath", "jmt.engine.random.EmpiricalEntry", "name", "EmpiricalEntry");
           Xml.textEl(Xml.child(entry, "subParameter", "classPath", "java.lang.String", "name", "stationName"),
               "value", edge.to());
-          double prob = edge.probability() == null ? 1.0 / edges.size() : edge.probability();
+          // A lone edge is probability 1.0 whatever the caller wrote; ContractValidator only checks
+          // the sum when a class has two or more edges out of a node.
+          double prob = edges.size() == 1 ? 1.0
+              : edge.probability() == null ? 1.0 / edges.size() : edge.probability();
           Xml.textEl(Xml.child(entry, "subParameter", "classPath", "java.lang.Double", "name", "probability"),
               "value", Double.toString(prob));
         }
@@ -530,6 +545,21 @@ public class JsimgWriter {
       }
     }
     return fromNode;
+  }
+
+  /**
+   * The targets of the {@code <connection>}s that {@link #writeConnections} emits out of the node
+   * whose domain routing key is {@code routingKey}: the union of every class's out-edges there.
+   * Empty for writer-internal stations (fork branches), whose links are not domain edges.
+   */
+  private static Set<String> connectionTargets(NetworkModel model, String routingKey) {
+    Set<String> targets = new java.util.HashSet<>();
+    for (JobClass c : model.classes()) {
+      for (RoutingEdge e : outEdges(model, c.name(), routingKey)) {
+        targets.add(e.to());
+      }
+    }
+    return targets;
   }
 
   private static List<RoutingEdge> outEdges(NetworkModel model, String className, String fromNode) {

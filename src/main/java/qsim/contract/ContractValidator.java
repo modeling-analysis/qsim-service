@@ -128,8 +128,49 @@ public class ContractValidator {
       }
     }
 
+    checkEveryReachedNodeHasAnExit(errors, model, routing, nodeNames);
+
     if (!errors.isEmpty()) {
       throw new ValidationException(ValidationException.Kind.UNPROCESSABLE, errors);
+    }
+  }
+
+  /**
+   * A class must be able to leave every non-sink node it reaches. JSIMG connections are
+   * class-agnostic, so the writer gives a class with no edges out of a node a RandomStrategy
+   * router, which would send that class down whatever edges OTHER classes declared there: a silent
+   * cross-class leak (issue #18). If no class leaves the node, the job is simply stuck.
+   *
+   * <p>A class reaches its source (open), its explicit reference station (closed), and the target
+   * of each of its edges. Counting the target of every edge, not only the edges reachable from the
+   * entry point, is deliberately strict: an edge into a dead end is a broken model even when no
+   * job happens to take it.
+   */
+  private static void checkEveryReachedNodeHasAnExit(List<String> errors, NetworkModel model,
+      Map<String, List<RoutingEdge>> routing, Set<String> nodeNames) {
+    Set<String> sinks = model.nodes().stream()
+        .filter(n -> n instanceof SinkNode).map(Node::name).collect(Collectors.toSet());
+    for (JobClass c : model.classes()) {
+      List<RoutingEdge> edges = routing.getOrDefault(c.name(), List.of());
+      Set<String> exits = edges.stream().map(RoutingEdge::from).collect(Collectors.toSet());
+      Set<String> reached = new java.util.LinkedHashSet<>();
+      for (Node n : model.nodes()) {
+        if ("open".equals(c.type()) && n instanceof SourceNode s
+            && s.arrivals() != null && s.arrivals().containsKey(c.name())) {
+          reached.add(n.name());
+        }
+      }
+      if ("closed".equals(c.type()) && c.referenceStation() != null) {
+        reached.add(c.referenceStation());
+      }
+      edges.forEach(e -> reached.add(e.to()));
+      for (String n : reached) {
+        // Unknown names are already reported by the routing checks above.
+        if (nodeNames.contains(n) && !sinks.contains(n) && !exits.contains(n)) {
+          errors.add("routing[" + c.name() + "]: class reaches '" + n
+              + "' but has no edge out of it");
+        }
+      }
     }
   }
 

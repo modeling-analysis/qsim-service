@@ -207,6 +207,6 @@ workflow above (each point averaged over independent seeds). See
 | Status | Meaning |
 |--------|---------|
 | 400 | Malformed JSON, or unsupported measure type |
-| 422 | Semantic model error (dangling routing, open class without a source, probabilities not summing to 1) or JSIMG schema failure |
+| 422 | Semantic model error (dangling routing, open class without a source, probabilities not summing to 1, a class that reaches a non-sink node with no edge out of it) or JSIMG schema failure |
 | 500 | Simulation engine failure |
 | 200 + `completed:false` | Watchdog fired before convergence — partial measures |
