@@ -92,6 +92,8 @@ contract is unchanged either way).
 
 ### 5.1 Request — `POST /simulate`
 
+> Finite capacity regions (`model.regions`, `region-*` measures) are specified in `2026-11-18-finite-capacity-regions-design.md`.
+
 ```jsonc
 {
   "model": {
@@ -252,6 +254,8 @@ Measure `type` values (v1): `response-time`, `residence-time`, `queue-time`, `qu
 ## 6. Translation & moment-matching
 
 ### 6.1 Domain-QN → JSIMG mapping
+
+> Regions, and the build-time patch of `simEngine.Simulation` they need, are specified in `2026-11-18-finite-capacity-regions-design.md` §6.1.
 
 | Domain concept        | JMT / JSIMG realization |
 |-----------------------|-------------------------|
