@@ -17,6 +17,14 @@ mvn package            # runs the full test suite (requires the JMT engine, head
 The unmodified `JMT-singlejar-1.5.0.jar` is bundled in `lib/` and referenced as a
 system-scoped Maven dependency.
 
+The first build on a machine needs network access, because Maven has to fetch
+`exec-maven-plugin` and `maven-jar-plugin`; `mvn -o` works afterwards. The build runs
+`qsim.build.JmtFcrPatcher` after compilation: it rewrites `simEngine.Simulation` (six
+instructions in `initialize()`, so a finite capacity region may contain fork-joins) and writes the
+patched class into `target/classes`, ahead of the jar on the classpath. The jar in `lib/` itself is
+unmodified, and the build fails if the jar or its `Simulation` class differs from the pinned
+SHA-256 (a JMT upgrade must redo the patch deliberately).
+
 ## Run
 
 Two options — a container, or a plain Java process. Both start the same server and read
@@ -191,6 +199,53 @@ three forms; the remaining JMT named distributions are a mechanical registry ext
 **Replication:** one request = one seed = one run. Run many seeds (e.g. many containers) and
 aggregate per the independent-replications method (design spec §9).
 
+### Regions (finite capacity)
+
+`model.regions` is optional. A region bounds how many customers may be inside a set of nodes at once;
+an arrival that finds it full waits at the entry or is dropped. Fork-joins may be members. Example:
+
+```json
+"regions": [
+  { "name": "qcsc",
+    "nodes": ["cpu_init_ps", "fj_pp", "qpu_psq", "gpu_psq"],
+    "capacity": 1,
+    "classCapacity": { "ps": 1 },
+    "whenFull": "wait" }
+]
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | Region name. It appears as `station` in region measure rows. |
+| `nodes` | string[] | Member node names (a `fork-join` counts as one node). |
+| `capacity` | int >= 1 | Maximum customers inside, summed over classes. |
+| `classCapacity` | map class -> int, optional | Per-class maximum inside, between 1 and `capacity`. |
+| `whenFull` | `"wait"` \| `"drop"`, or a map class -> `"wait"`\|`"drop"` | What an arrival that finds the region full does. Default `"wait"`; classes missing from a map wait. |
+
+Region measures are opt-in: they are never added to the defaults, so a model that gains a region
+keeps its existing response. Rows have `station` = the region name and one row per class that enters
+the region (a class with an edge from a non-member into a member). Requesting a `region-*` measure
+on a model without regions is a 400.
+
+| Measure | What it reports |
+|---|---|
+| `region-response-time` | total time in the region, entry wait included |
+| `region-queue-time` | wait at the region entry before admission |
+| `region-queue-length` | customers waiting at the entry plus inside |
+| `region-throughput` | admitted customers per unit time (a rate) |
+| `region-drop-rate` | customers discarded at a full region per unit time (a rate) |
+
+Time inside = `region-response-time` - `region-queue-time` (means only). Station measures on members
+are unchanged: `response-time` on a member does not include the region's entry wait.
+
+**v1 limits:** no closed class may be routed into a region (by an entering edge, or by having its
+reference station inside); members' `capacity` must be unset; a fork-join member must use
+`join: "all"` (or omit `join`); `interarrival-time` is not reported at a node where a class enters a
+region (JMT counts each arrival there twice); interior members are unaffected.
+
+**Known limitation:** a JMT failure *during* a simulation run (not at load or setup) leaks one idle
+JMT watchdog thread per failure. This is a JMT 1.5.0 issue; see the comment in `JmtRunner.java`.
+
 ## Examples
 
 Worked, runnable examples live in [`examples/`](examples/). The
@@ -206,7 +261,7 @@ workflow above (each point averaged over independent seeds). See
 
 | Status | Meaning |
 |--------|---------|
-| 400 | Malformed JSON, or unsupported measure type |
-| 422 | Semantic model error (dangling routing, open class without a source, probabilities not summing to 1, a class that reaches a non-sink node with no edge out of it, a routing key that is not a declared class, a closed class whose referenceStation does not exist) or JSIMG schema failure |
+| 400 | Malformed JSON, or unsupported measure type, including a `region-*` measure on a model without regions |
+| 422 | Semantic model error (dangling routing, open class without a source, probabilities not summing to 1, a class that reaches a non-sink node with no edge out of it, a routing key that is not a declared class, a closed class whose referenceStation does not exist, or an invalid region: a null entry in `regions`, empty or non-queue/delay/fork-join members, a member node that does not exist, a node in two regions, a duplicate region name or one colliding with a node, a generated fork-join station or JMT's `<name>_inputStation`, `capacity` < 1, a bad `classCapacity` or `whenFull`, a fork-join member with a partial `join`, a member queue with `capacity`, a closed class routed into a region) or JSIMG schema failure |
 | 500 | Simulation engine failure |
 | 200 + `completed:false` | Watchdog fired before convergence — partial measures |

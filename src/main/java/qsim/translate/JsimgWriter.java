@@ -94,6 +94,7 @@ public class JsimgWriter {
       }
     }
     writeConnections(sim, model);
+    writeRegions(sim, model);
     writePreload(sim, model);
     return doc;
   }
@@ -150,6 +151,74 @@ public class JsimgWriter {
           List.of("cannot determine referenceStation for closed class '" + c.name() + "'"));
     }
     return ref;
+  }
+
+  /**
+   * One {@code <blockingRegion>} per finite capacity region, after the connections and before the
+   * preload (that is where {@code SimLoader} and the XSD expect it). A model without regions
+   * emits nothing, which keeps its JSIMG byte-identical to what it was before regions existed.
+   *
+   * <p>Child order matters. The engine's schema check wants the per-class children grouped by
+   * tag, all {@code dropRules}, then all {@code classWeight}, then all {@code classSize};
+   * interleaving them per class prints a non-fatal {@code cvc-complex-type} error. Both
+   * {@code globalConstraint} and {@code globalMemoryConstraint} are mandatory: without the
+   * latter {@code SimLoader} throws {@code LoadException}, so {@code maxMemory="-1"} (unbounded)
+   * is always written.
+   *
+   * <p>JMT's own default, when {@code dropRules} is absent, is to drop open classes and make
+   * closed ones wait. qsim's default is "wait" for every class, so the rule is written
+   * explicitly for every declared class. A {@code classConstraint} is written only for the
+   * {@code classCapacity} entries; the other classes are bounded by the global constraint alone.
+   */
+  private void writeRegions(Element sim, NetworkModel model) {
+    if (model.regions() == null) {
+      return;
+    }
+    for (Region r : model.regions()) {
+      Element br = Xml.child(sim, "blockingRegion", "name", r.name(), "type", "default");
+      for (String member : r.nodes()) {
+        for (String station : regionStations(model, member)) {
+          Xml.child(br, "regionNode", "nodeName", station);
+        }
+      }
+      Xml.child(br, "globalConstraint", "maxJobs", String.valueOf(r.capacity()));
+      Xml.child(br, "globalMemoryConstraint", "maxMemory", "-1");
+      if (r.classCapacity() != null) {
+        for (var e : r.classCapacity().entrySet()) {
+          Xml.child(br, "classConstraint", "jobClass", e.getKey(),
+              "maxJobsPerClass", String.valueOf(e.getValue()));
+        }
+      }
+      for (JobClass c : model.classes()) {
+        Xml.child(br, "dropRules", "jobClass", c.name(), "dropThisClass", String.valueOf(r.drops(c.name())));
+      }
+      for (JobClass c : model.classes()) {
+        Xml.child(br, "classWeight", "jobClass", c.name(), "weight", "1");
+      }
+      for (JobClass c : model.classes()) {
+        Xml.child(br, "classSize", "jobClass", c.name(), "size", "1");
+      }
+    }
+  }
+
+  /**
+   * The JSIMG stations a region member stands for. A fork-join is expanded into 2+N stations (the
+   * fork under the domain name, one per branch, and the join); the engine must see all of them
+   * as members or the forked tasks would count as leaving the region.
+   */
+  private static List<String> regionStations(NetworkModel model, String member) {
+    for (Node n : model.nodes()) {
+      if (n instanceof ForkJoinNode fj && fj.name().equals(member)) {
+        List<String> out = new ArrayList<>();
+        out.add(fj.name());
+        for (int i = 0; i < fj.branches().size(); i++) {
+          out.add(branchStationName(fj.name(), i));
+        }
+        out.add(joinStationName(fj.name()));
+        return out;
+      }
+    }
+    return List.of(member);
   }
 
   /**

@@ -170,4 +170,22 @@ class SolutionsParserTest {
     assertEquals(0.2935860105446729, tp.lower(), "its CI *is* on the rate, so it is kept");
     assertEquals(0.3085510461620826, tp.upper());
   }
+
+  @Test
+  void parsesRegionRows() throws Exception {
+    SolutionsParser.Parsed p =
+        new SolutionsParser().parse(resource("/results/region.solutions.xml"));
+    assertEquals(3, p.measures().size());
+    MeasureResult qt = p.measures().get(0);
+    assertEquals("R", qt.station());
+    assertEquals("web", qt.jobClass());
+    assertEquals("region-queue-time", qt.type());
+    assertEquals(1.765, qt.mean());
+    MeasureResult rt = p.measures().get(1);
+    assertEquals("region-response-time", rt.type());
+    MeasureResult x = p.measures().get(2);
+    assertEquals("region-throughput", x.type());
+    assertEquals(0.403, x.mean());
+    assertNull(x.variance());
+  }
 }

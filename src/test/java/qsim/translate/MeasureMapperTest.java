@@ -246,4 +246,75 @@ class MeasureMapperTest {
     assertEquals(List.of("q_web_utilization", "q_web_interarrival-time"),
         specs.stream().map(MeasureSpec::name).toList());
   }
+
+  /** a: src -> q1 -> snk (enters R={q1}); b: src -> q2 -> snk (routed around R). */
+  private NetworkModel regionModel() {
+    Map<String, ServiceSpec> svc = Map.of("a", new ServiceSpec(exp(2.0)), "b", new ServiceSpec(exp(2.0)));
+    return new NetworkModel("m",
+        List.of(new JobClass("a", "open", null, null), new JobClass("b", "open", null, null)),
+        List.of(new SourceNode("src", "source",
+                    Map.of("a", new ArrivalSpec(exp(0.5)), "b", new ArrivalSpec(exp(0.5)))),
+                new QueueNode("q1", "queue", 1, "fcfs", null, svc),
+                new QueueNode("q2", "queue", 1, "fcfs", null, svc),
+                new SinkNode("snk", "sink")),
+        Map.of("a", List.of(new RoutingEdge("src", "q1", null), new RoutingEdge("q1", "snk", null)),
+               "b", List.of(new RoutingEdge("src", "q2", null), new RoutingEdge("q2", "snk", null))),
+        List.of(new Region("R", List.of("q1"), 1, null, null)));
+  }
+
+  @Test
+  void mapsRegionTypesPerEnteringClass() {
+    List<MeasureSpec> specs = mapper.map(regionModel(), List.of("region-response-time",
+        "region-queue-time", "region-queue-length", "region-throughput", "region-drop-rate"));
+    assertEquals(List.of("Response Time", "Queue Time", "Number of Customers", "Throughput",
+        "Drop Rate"), specs.stream().map(MeasureSpec::jmtType).toList());
+    MeasureSpec s = specs.get(1);
+    assertEquals("region_R_a_region-queue-time", s.name());
+    assertEquals("R", s.referenceNode());
+    assertEquals("a", s.referenceUserClass());
+    assertEquals("region", s.nodeType());
+  }
+
+  @Test
+  void regionRowsOnlyForEnteringClasses() {
+    List<MeasureSpec> specs = mapper.map(regionModel(), List.of("region-queue-time"));
+    assertEquals(1, specs.size());
+    assertEquals("a", specs.get(0).referenceUserClass());
+  }
+
+  @Test
+  void defaultsAddNoRegionRows() {
+    List<MeasureSpec> specs = mapper.map(regionModel(), null);
+    assertTrue(specs.stream().noneMatch(s -> s.nodeType().equals("region")));
+    // 4 default types x (q1, q2) x 2 classes served = 16
+    assertEquals(16, specs.size());
+  }
+
+  @Test
+  void regionTypeWithoutRegionsIsBadRequest() {
+    ValidationException e = assertThrows(ValidationException.class,
+        () -> mapper.map(model(), List.of("region-queue-time")));
+    assertEquals(ValidationException.Kind.BAD_REQUEST, e.kind());
+  }
+
+  /** src -> q1 -> q2 -> snk for class a, with R = {q1, q2}: q1 is the entry, q2 is interior. */
+  @Test
+  void interarrivalTimeIsOmittedAtRegionEntriesButKeptForInteriorMembers() {
+    Map<String, ServiceSpec> svc = Map.of("a", new ServiceSpec(exp(2.0)));
+    NetworkModel m = new NetworkModel("m",
+        List.of(new JobClass("a", "open", null, null)),
+        List.of(new SourceNode("src", "source", Map.of("a", new ArrivalSpec(exp(0.5)))),
+                new QueueNode("q1", "queue", 1, "fcfs", null, svc),
+                new QueueNode("q2", "queue", 1, "fcfs", null, svc),
+                new SinkNode("snk", "sink")),
+        Map.of("a", List.of(new RoutingEdge("src", "q1", null), new RoutingEdge("q1", "q2", null),
+            new RoutingEdge("q2", "snk", null))),
+        List.of(new Region("R", List.of("q1", "q2"), 1000, null, null)));
+    List<MeasureSpec> specs = mapper.map(m, List.of("interarrival-time"));
+    assertEquals(List.of("q2_a_interarrival-time"), specs.stream().map(MeasureSpec::name).toList());
+    // Another class that does not enter keeps its row at the same node: regionModel's class b at q1.
+    List<MeasureSpec> two = mapper.map(regionModel(), List.of("interarrival-time"));
+    assertEquals(java.util.Set.of("q1_b_interarrival-time", "q2_a_interarrival-time", "q2_b_interarrival-time"),
+        two.stream().map(MeasureSpec::name).collect(java.util.stream.Collectors.toSet()));
+  }
 }

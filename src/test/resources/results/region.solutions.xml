@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<solutions>
+  <!-- Region measures as JMT 1.5.0 writes them: nodeType="region", station = the region name. -->
+  <measure alfa="0.05" analyzedSamples="51200" class="web" discardedSamples="0" lowerLimit="1.678" maxSamples="1000000" meanValue="1.765" nodeType="region" precision="0.05" station="R" successful="true" type="Queue Time" upperLimit="1.852"/>
+  <measure alfa="0.05" analyzedSamples="51200" class="web" discardedSamples="0" lowerLimit="3.1" maxSamples="1000000" meanValue="3.26" nodeType="region" precision="0.05" station="R" successful="true" type="Response Time" upperLimit="3.4"/>
+  <measure alfa="0.05" analyzedSamples="51200" class="web" discardedSamples="0" lowerLimit="0.39" maxSamples="1000000" mean="2.48" meanValue="0.403" nodeType="region" precision="0.05" station="R" successful="true" type="Throughput" upperLimit="0.41" variance="9.9"/>
+</solutions>

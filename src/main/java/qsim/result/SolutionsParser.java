@@ -47,6 +47,18 @@ public class SolutionsParser {
       // because that measure is anchored on the fork station, so no station remap is needed.
       Map.entry("Fork Join Response Time", "response-time"));
 
+  // Region measures (spec section 3) reuse JMT's station-level type strings, so REVERSE would turn a
+  // region "Response Time" into "response-time". The parser branches on nodeType="region" first.
+  // Probed on JMT 1.5.0 (fcr-forkjoin fixture plus a region "Queue Time" measure): the output row
+  // carries station="<region name>" (e.g. "fcr", NOT "<name>_inputStation") and nodeType="region",
+  // so the station needs no suffix stripping.
+  private static final Map<String, String> REGION_REVERSE = Map.of(
+      "Response Time", "region-response-time",
+      "Queue Time", "region-queue-time",
+      "Number of Customers", "region-queue-length",
+      "Throughput", "region-throughput",
+      "Drop Rate", "region-drop-rate");
+
   public Parsed parse(File output) {
     try {
       DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
@@ -109,10 +121,12 @@ public class SolutionsParser {
         Double variance = rateTyped ? null : parseD(m.getAttribute("variance"));
         Double stdDev = rateTyped ? null : parseD(m.getAttribute("standardDeviation"));
 
+        boolean region = "region".equals(m.getAttribute("nodeType"));
         results.add(new MeasureResult(
-            domainStation(m.getAttribute("station")),
+            region ? m.getAttribute("station") : domainStation(m.getAttribute("station")),
             m.getAttribute("class"),
-            REVERSE.getOrDefault(jmtType, jmtType),
+            region ? REGION_REVERSE.getOrDefault(jmtType, jmtType)
+                : REVERSE.getOrDefault(jmtType, jmtType),
             mean,
             lower,
             upper,

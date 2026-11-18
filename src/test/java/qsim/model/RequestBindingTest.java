@@ -102,4 +102,55 @@ class RequestBindingTest {
         """;
     assertNull(Json.MAPPER.readValue(json, SimulationRequest.class).secondMoments());
   }
+
+  private static final String REGION_MODEL = """
+      {"model":{"name":"m","classes":[],"nodes":[],"routing":{}%s}}
+      """;
+
+  @Test
+  void bindsRegionWithStringWhenFull() throws Exception {
+    SimulationRequest req = Json.MAPPER.readValue(REGION_MODEL.formatted(
+        ",\"regions\":[{\"name\":\"R\",\"nodes\":[\"q1\"],\"capacity\":2,\"whenFull\":\"drop\"}]"),
+        SimulationRequest.class);
+    Region r = req.model().regions().get(0);
+    assertEquals("R", r.name());
+    assertEquals(2, r.capacity());
+    assertEquals("drop", r.whenFullFor("x"));
+    assertTrue(r.drops("x"));
+  }
+
+  @Test
+  void bindsRegionWithMapWhenFull() throws Exception {
+    SimulationRequest req = Json.MAPPER.readValue(REGION_MODEL.formatted(
+        ",\"regions\":[{\"name\":\"R\",\"nodes\":[\"q1\"],\"capacity\":2,"
+            + "\"classCapacity\":{\"a\":1},\"whenFull\":{\"a\":\"drop\"}}]"),
+        SimulationRequest.class);
+    Region r = req.model().regions().get(0);
+    assertEquals("drop", r.whenFullFor("a"));
+    assertEquals("wait", r.whenFullFor("b"), "an omitted class waits");
+    assertEquals(1, r.classCapacity().get("a"));
+  }
+
+  @Test
+  void regionWithoutWhenFullWaits() throws Exception {
+    SimulationRequest req = Json.MAPPER.readValue(REGION_MODEL.formatted(
+        ",\"regions\":[{\"name\":\"R\",\"nodes\":[\"q1\"],\"capacity\":2}]"),
+        SimulationRequest.class);
+    assertEquals("wait", req.model().regions().get(0).whenFullFor("a"));
+  }
+
+  @Test
+  void modelWithoutRegionsBindsNull() throws Exception {
+    SimulationRequest req = Json.MAPPER.readValue(REGION_MODEL.formatted(""), SimulationRequest.class);
+    assertNull(req.model().regions());
+  }
+
+  @Test
+  void isEntryIsTrueOnlyForAnEdgeFromOutsideToInside() {
+    Region r = new Region("R", java.util.List.of("a", "b"), 1, null, null);
+    assertTrue(r.isEntry(new RoutingEdge("x", "a", null)));
+    assertTrue(!r.isEntry(new RoutingEdge("a", "b", null)));
+    assertTrue(!r.isEntry(new RoutingEdge("b", "x", null)));
+    assertTrue(!r.isEntry(new RoutingEdge("x", "y", null)));
+  }
 }

@@ -51,6 +51,24 @@ class SimulationHandlerTest {
   }
 
   @Test
+  void nullRegionEntryMapsTo422() {
+    // Valid JSON that binds a null region: must be a validation error, not an NPE and a 500 (PR #20).
+    String json = """
+        {"model":{"name":"r",
+          "classes":[{"name":"web","type":"open"}],
+          "nodes":[{"name":"src","type":"source","arrivals":{"web":{"distribution":{"type":"exponential","rate":1.0}}}},
+                   {"name":"q","type":"queue","servers":1,"scheduling":"fcfs","service":{"web":{"distribution":{"type":"exponential","rate":2.0}}}},
+                   {"name":"snk","type":"sink"}],
+          "routing":{"web":[{"from":"src","to":"q"},{"from":"q","to":"snk"}]},
+          "regions":[null]},
+         "seed":1}
+        """;
+    SimulationHandler.Result r = handler.process(json.getBytes(StandardCharsets.UTF_8));
+    assertEquals(422, r.status());
+    assertTrue(new String(r.body(), StandardCharsets.UTF_8).contains("regions[0]"));
+  }
+
+  @Test
   void unsupportedMeasureMapsTo400() {
     String json = """
         {"model":{"name":"m",

@@ -21,5 +21,12 @@ public record NetworkModel(
     String name,
     List<JobClass> classes,
     List<Node> nodes,
-    Map<String, List<RoutingEdge>> routing) {
+    Map<String, List<RoutingEdge>> routing,
+    List<Region> regions) {
+
+  /** A model without finite capacity regions; {@code regions} is null, as when the JSON omits it. */
+  public NetworkModel(String name, List<JobClass> classes, List<Node> nodes,
+      Map<String, List<RoutingEdge>> routing) {
+    this(name, classes, nodes, routing, null);
+  }
 }

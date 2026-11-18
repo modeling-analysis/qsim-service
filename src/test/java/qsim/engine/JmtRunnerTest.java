@@ -15,10 +15,14 @@
 package qsim.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 class JmtRunnerTest {
@@ -60,5 +64,38 @@ class JmtRunnerTest {
       out.add(matcher.group(1));
     }
     return out;
+  }
+
+  /**
+   * Covers load- and initialize-time failures only, which occur before JMT starts its watchdog
+   * executor. A run-time failure (exception from Simulation.run()) does leak a thread; see the
+   * KNOWN LEAK comment in {@link JmtRunner#run}.
+   */
+  @Test
+  void loadFailureLeavesNoWatchdogThread() throws Exception {
+    String xml;
+    try (var in = getClass().getResourceAsStream("/models/fcr-forkjoin.sim.xml")) {
+      xml = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+    String broken = xml.replaceAll("<globalMemoryConstraint[^>]*/>", "");
+    assertTrue(!broken.equals(xml), "fixture must have had a globalMemoryConstraint to remove");
+
+    Set<Thread> before = new HashSet<>(Thread.getAllStackTraces().keySet());
+    assertThrows(EngineException.class, () -> new JmtRunner().run(broken, 1L, 600, true));
+
+    Set<Thread> leaked = Set.of();
+    long deadline = System.nanoTime() + 2_000_000_000L;
+    do {
+      leaked = Thread.getAllStackTraces().keySet().stream()
+          .filter(t -> !before.contains(t) && t.isAlive())
+          .collect(Collectors.toSet());
+      if (leaked.isEmpty()) {
+        break;
+      }
+      Thread.sleep(50);
+    } while (System.nanoTime() < deadline);
+    assertTrue(leaked.isEmpty(),
+        "threads left running after a failed run: "
+            + leaked.stream().map(Thread::getName).collect(Collectors.toList()));
   }
 }

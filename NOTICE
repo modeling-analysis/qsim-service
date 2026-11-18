@@ -10,7 +10,11 @@ This product bundles and links, in-process, the following GPL software:
 
   Java Modelling Tools (JMT) 1.5.0 — https://jmt.sourceforge.net/
   Copyright (C) the JMT authors. Licensed under the GNU GPL v2 or later.
-  The bundled artifact (lib/JMT-singlejar-1.5.0.jar) is unmodified.
+  The bundled jar (lib/JMT-singlejar-1.5.0.jar) is unmodified. At build time,
+  however, qsim rewrites simEngine.Simulation.initialize() (6 instructions) so
+  that Fork/Join sections may be members of a finite capacity region. The
+  patcher source is src/main/java/qsim/build/JmtFcrPatcher.java, and the
+  patched class ships in qsim-service.jar.
 
 Because this service links JMT engine classes in-process, it is a derivative
 work and is therefore distributed under the GPL (v2 or later). The complete
